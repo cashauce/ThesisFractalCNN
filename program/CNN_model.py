@@ -23,7 +23,8 @@ class MRIDataset(Dataset):
         img_path = os.path.join(self.folder, self.image_files[idx])
         img = Image.open(img_path)  # Load as-is
         img = torch.tensor(np.array(img), dtype=torch.float32)  # Convert to tensor
-        img = img.permute(2, 0, 1) if len(img.shape) == 3 else img.unsqueeze(0)  # Ensure (C, H, W)
+        img = img.unsqueeze(0)  # Ensure (1, H, W) for grayscale
+        img = (img - img.mean()) / img.std()  # Normalize
         return img
 
 # Load dataset
@@ -46,14 +47,21 @@ class CNNModel(nn.Module):
         super(CNNModel, self).__init__()
         
         # Convolutional Layers
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
         
         # Pooling Layer
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         
         # Fully Connected Layers
-        self.fc1 = nn.Linear(64 * 8 * 8, 128)  # Feature vector of 128
+        self.fc1_input_size = self._get_fc1_input_size()
+        self.fc1 = nn.Linear(self.fc1_input_size, 128)  # Adjust based on input size
+        
+    def _get_fc1_input_size(self):
+        # Create a dummy input tensor with the same size as your images
+        dummy_input = torch.zeros(1, 1, 256, 256)  # Adjust based on your image size
+        dummy_output = self.pool(F.relu(self.conv2(self.pool(F.relu(self.conv1(dummy_input))))))
+        return int(np.prod(dummy_output.size()))
         
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
