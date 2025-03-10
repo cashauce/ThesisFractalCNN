@@ -182,14 +182,11 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
     imsave(output_file, reconstructed_image)
 
 
-
-
-
 # function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     image_files = image_files[:limit]
-    print(f"Compressing {limit} image/s in '{original_path}' using fractal compression...")
+    print(f"Compressing {limit} image/s in '{original_path}' using enhanced fractal compression...")
 
     for idx, image_file in enumerate(image_files, start=1):
         image_path = os.path.join(original_path, image_file)

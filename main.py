@@ -2,7 +2,7 @@ import sys
 import argparse
 from program.models.traditional import run_traditional_compression
 from program.models.enhanced import run_enhanced_compression
-#from program.CNN_model import train_cnn_model
+from program.CNN_model import train_cnn_model
 from program.preprocess_module import preprocess_images
 
 
@@ -41,8 +41,6 @@ if __name__ == "__main__":
     )
 
     # Argument for evaluation
-    
-
     args = parser.parse_args()
 
     # Run the specified part of the pipeline
@@ -56,9 +54,6 @@ if __name__ == "__main__":
         if not args.original_path:
             print("Error: --original_path is required for the hybrid compression.")
             sys.exit(1)
-        #if args.limit < 50:
-            #print("Error: --limit is required to be greater than 50 for the hybrid compression.")
-            #sys.exit(1)
         run_enhanced_compression(args.original_path, args.output_path+"/enhanced", limit=args.limit)
 
     elif args.part == "preprocess":
@@ -67,24 +62,24 @@ if __name__ == "__main__":
             sys.exit(1)
         preprocess_images(args.original_path, "data/preprocessed", limit=args.limit)
     
-    """elif args.part == "train":
+    elif args.part == "train":
         if not args.original_path:
             print("Error: --original_path is required to train the model.")
             sys.exit(1)
-        if args.limit < 50: # change pa to na appropriate for the no. of dataset
-            print("Error: --limit is required to be greater than 50 for the hybrid compression.")
-            sys.exit(1)
-        train_cnn_model(args.original_path, args.output_)"""
+        train_cnn_model(args.original_path, args.output_path)
     
 
 
 #   data_collection
 
 #   traditional                                       "data/dataset/pituitary"   --limit = no. of data to be use (remove if ALL)
-#   python main.py --part traditional --original_path "data/dataset/glioma" --limit 2
+#   python main.py --part traditional --original_path "data/dataset/glioma" --limit 1
 
 #   enhanced                                       "data/dataset/pituitary"
-#   python main.py --part enhanced --original_path "data/dataset/glioma" --limit 50
+#   python main.py --part enhanced --original_path "data/dataset/glioma" --limit 5
 
 #   preprocessing                    --original_path ay pwede na "data/dataset/glioma" or "data/dataset/pituitary"
 #   python main.py --part preprocess --original_path "data/dataset/pituitary" --limit 10
+
+#   cnn model training
+#   python main.py --part train --original_path data/preprocessed --output_path data/features
