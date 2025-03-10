@@ -24,7 +24,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--original_path",
         type=str,
-        default="data/preprocessed",
+        default=None,
         help="Path to the original image folder"
     )
     parser.add_argument(
@@ -80,11 +80,11 @@ if __name__ == "__main__":
 
 #   data_collection
 
-#   traditional                       --limit = no. of data to be use (remove if ALL)
-#   python main.py --part traditional --limit 2
+#   traditional                                       "data/dataset/pituitary"   --limit = no. of data to be use (remove if ALL)
+#   python main.py --part traditional --original_path "data/dataset/glioma" --limit 2
 
-#   enhanced
-#   python main.py --part enhanced --limit 50
+#   enhanced                                       "data/dataset/pituitary"
+#   python main.py --part enhanced --original_path "data/dataset/glioma" --limit 50
 
 #   preprocessing                    --original_path ay pwede na "data/dataset/glioma" or "data/dataset/pituitary"
 #   python main.py --part preprocess --original_path "data/dataset/pituitary" --limit 10
