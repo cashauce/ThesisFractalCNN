@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 import time
-from program.util import evaluate_compression, getTime
+from program.util import save_csv
 from skimage import io, img_as_ubyte, transform
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
@@ -190,25 +190,23 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
 
     for idx, image_file in enumerate(image_files, start=1):
         image_path = os.path.join(original_path, image_file)
-        output_file = os.path.join(output_path, f"compressed_{os.path.splitext(image_file)[0]}.jpg")
+        compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        output_file = os.path.join(output_path, compressed_file)
         print(f"[Image {idx}/{limit}] Processing {image_file}...")
 
         image = load_image(image_path)
 
-
         start_time = time.time()
         encoded_data, domain_blocks = encode_image_with_kdtree_manual(image, block_size)
         end_time = time.time()
-        total_time = getTime(end_time-start_time)
-        print(f"Decoding time: {total_time}")
+        encodingTime = round((end_time-start_time), 4)
 
         start_time = time.time()
         decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
         end_time = time.time()
-        total_time = getTime(end_time-start_time)
-        print(f"Decoding time: {total_time}")
+        decodingTime = round((end_time-start_time), 4)
 
-        evaluate_compression(image, image_path, output_file)
+        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime)
 
     print(f"***Finished compressing {limit} image/s***")
     sys.exit(1)
