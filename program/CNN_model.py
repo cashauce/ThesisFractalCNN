@@ -27,7 +27,7 @@ class MRIDataset(Dataset):
 
 # DEFINE CNN MODEL
 class CNNModel(nn.Module):
-    def __init__(self):
+    def __init__(self, input_size=64):  # Ensure input_size is a valid parameter
         super(CNNModel, self).__init__()
 
         self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1)
@@ -35,13 +35,24 @@ class CNNModel(nn.Module):
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
-        self.fc1 = nn.Linear(64 * 64 * 64, 128)
+        # Dynamically calculate the flattened size
+        self.input_size = input_size
+        self.flattened_size = self._calculate_flattened_size()
+
+        self.fc1 = nn.Linear(self.flattened_size, 128)
+
+    def _calculate_flattened_size(self):
+        # Pass a dummy tensor through the layers to determine the flattened size
+        dummy_input = torch.zeros(1, 1, self.input_size, self.input_size)
+        x = self.pool(F.relu(self.conv1(dummy_input)))
+        x = self.pool(F.relu(self.conv2(x)))
+        return x.numel()
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(x.shape[0], -1)  # Flatten
-        x = self.fc1(x)  # Feature vector
+        x = self.pool(F.relu(self.conv1(x)))  # First convolution + pooling
+        x = self.pool(F.relu(self.conv2(x)))  # Second convolution + pooling
+        x = x.view(x.shape[0], -1)  # Flatten the tensor
+        x = self.fc1(x)  # Fully connected layer
         return x
 
 
