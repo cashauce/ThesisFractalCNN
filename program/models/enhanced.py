@@ -2,19 +2,34 @@ import sys
 import os
 import numpy as np
 import time
-from program.util import evaluate_compression, getTime
+from program.util import save_csv
 from skimage import io, img_as_ubyte, transform
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
 from skimage.io import imsave
 from tqdm import tqdm
+import torch
+import torchvision.transforms as transforms
+from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+from skimage.color import rgb2gray
 
+# Load pre-trained MobileNetV2 model for feature extraction
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def load_cnn_model(model_path, device):
+    model = mobilenet_v2(weights=None).features.to(device)  # Load MobileNetV2 without default weights
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    return model
 
 def load_image(file_path, target_size=(256, 256)):
-    image = io.imread(file_path, as_gray=True)
-    image = transform.resize(image, target_size, anti_aliasing=True) 
-    image = (image - np.min(image)) / (np.max(image) - np.min(image)) 
-    return image.astype(np.float32)
+    try:
+        image = io.imread(file_path, as_gray=True)
+        image = transform.resize(image, target_size, anti_aliasing=True)
+        image = (image - np.min(image)) / (np.max(image) - np.min(image))  # Normalize to [0, 1]
+        return image.astype(np.float32)
+    except Exception as e:
+        raise ValueError(f"Error loading image at {file_path}: {e}")
 
 # KD-tree node class
 class KDNode:
@@ -23,7 +38,7 @@ class KDNode:
         self.left = left    # left child
         self.right = right  # right child
 
-# build KD-tree manually
+# Build KD-tree manually
 def build_kdtree(points, depth=0):
     if not points:
         return None
@@ -34,18 +49,18 @@ def build_kdtree(points, depth=0):
     points.sort(key=lambda x: x[axis])
     median = len(points) // 2 
 
-    # create node and construct subtrees
+    # Create node and construct subtrees
     return KDNode(
         point=points[median],
         left=build_kdtree(points[:median], depth + 1),
         right=build_kdtree(points[median + 1:], depth + 1)
     )
 
-# calculate euclidean distance
+# Calculate Euclidean distance
 def euclidean_distance(point1, point2):
     return np.sqrt(np.sum((np.array(point1) - np.array(point2)) ** 2))
 
-# find nearest neighbor in the KD-tree
+# Find nearest neighbor in the KD-tree
 def kdtree_nearest_neighbor(node, target, depth=0, best=None):
     if node is None:
         return best
@@ -53,7 +68,7 @@ def kdtree_nearest_neighbor(node, target, depth=0, best=None):
     k = len(target)
     axis = depth % k
 
-    # update best if the current node is closer
+    # Update best if the current node is closer
     if best is None or euclidean_distance(target, node.point) < euclidean_distance(target, best):
         best = node.point
 
@@ -66,16 +81,16 @@ def kdtree_nearest_neighbor(node, target, depth=0, best=None):
         next_branch = node.right
         opposite_branch = node.left
 
-    # search the next branch
+    # Search the next branch
     best = kdtree_nearest_neighbor(next_branch, target, depth + 1, best)
 
-    # check the other branch if necessary
+    # Check the other branch if necessary
     if abs(target[axis] - node.point[axis]) < euclidean_distance(target, best):
         best = kdtree_nearest_neighbor(opposite_branch, target, depth + 1, best)
 
     return best
 
-# partition image into smaller blocks
+# Partition image into smaller blocks
 def partition_image(image, block_size):
     h, w = image.shape[:2]
     blocks = []
@@ -88,12 +103,10 @@ def partition_image(image, block_size):
             blocks.append(block)
     return blocks
 
-# apply affine transformation
-# hindi pa nagagamit sa encoding yung affine transformation 
+# Apply affine transformation
 def apply_affine_transformation(block, transformation):
     scale, rotation, tx, ty = transformation
     h, w = block.shape
-    #center_y, center_x = h // 2, w // 2
 
     transformation_matrix = np.array([
         [scale * np.cos(rotation), -scale * np.sin(rotation), tx],
@@ -111,64 +124,57 @@ def apply_affine_transformation(block, transformation):
     y_transformed = np.clip(y_transformed, 0, h - 1).astype(np.int32)
 
     transformed_block = block[y_transformed, x_transformed]
-    #print(transformed_block)
-
     return transformed_block
 
-
-def find_best_match_kdtree_manual(block, kd_tree, domain_blocks, transformation):
-    block_vector = block.flatten()  
-    best_vector = kdtree_nearest_neighbor(kd_tree, block_vector)
-    best_index = [np.array_equal(best_vector, b.flatten()) for b in domain_blocks].index(True)
-
-    #transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
-    transformed_block = None
-
-    return best_index, transformation, transformed_block
-
-
-# encode image with KD-tree
+# Encode image with KD-tree and CNN features
 def encode_image_with_kdtree_manual(image, block_size=8):
     range_blocks = partition_image(image, block_size)
     domain_blocks = partition_image(image, block_size)
 
-    # flatten domain blocks and build KD-tree
+    # Flatten domain blocks and build KD-tree
     domain_vectors = [block.flatten() for block in domain_blocks]
     kd_tree = build_kdtree(domain_vectors)
 
     encoded_data = []
-
-    # example transformation (rotation, scaling, translation)
-    transformation = (1.0, 0.0, 1, 1)  # no scaling, no rotation, and translation by (1, 1)
+    transformation = (1.0, 0.0, 1, 1)  # Example transformation
 
     with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="red") as pbar:
         for block in range_blocks:
-            best_index, _ , transformed_block = find_best_match_kdtree_manual(block, kd_tree, domain_blocks, transformation)
-            encoded_data.append((best_index, transformation))  # store best index and transformation
+            block_vector = block.flatten()
+            best_index, _, transformed_block = find_best_match_kdtree_manual(block_vector, kd_tree, domain_blocks, transformation)
+            encoded_data.append((best_index, transformation))  # Store best index and transformation
             pbar.update(1)
 
     return encoded_data, domain_blocks
 
+def find_best_match_kdtree_manual(block_vector, kd_tree, domain_blocks, transformation):
+    # Find the nearest neighbor in the KD-tree
+    best_vector = kdtree_nearest_neighbor(kd_tree, block_vector)
+    
+    # Find the index of the best matching block in the domain blocks
+    best_index = [np.array_equal(best_vector, b.flatten()) for b in domain_blocks].index(True)
 
+    # Apply the transformation (if needed)
+    transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
 
-# decode the image
+    return best_index, transformation, transformed_block
+
+# Decode the image
 def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_file=None, output_path='data/compressed/fractal'):
     os.makedirs(output_path, exist_ok=True)
     reconstructed_image = np.zeros(image_shape, dtype=np.float64)
     h, w = image_shape
     idx = 0
 
-    # decode the data from the raw binary format and include transformation info
+    # Decode the data from the raw binary format and include transformation info
     decoded_data = [(int(entry[0]), entry[1]) for entry in encoded_data]
 
     for i in range(0, h, block_size):
         for j in range(0, w, block_size):
             if idx < len(decoded_data):
                 best_index, transformation = decoded_data[idx]
-
                 transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
                 reconstructed_image[i:i + block_size, j:j + block_size] = transformed_block
-                
                 idx += 1
 
     reconstructed_image = np.clip(reconstructed_image, 0, 1)
@@ -177,41 +183,39 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
 
     reconstructed_image = img_as_ubyte(reconstructed_image)
 
-    # save the reconstructed image
+    # Save the reconstructed image
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     imsave(output_file, reconstructed_image)
 
-
-
-
-
-# function to compress and evaluate images in a folder using fractal compression
+# Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     image_files = image_files[:limit]
-    print(f"Compressing {limit} image/s in '{original_path}' using fractal compression...")
+    print(f"Compressing {limit} image/s in '{original_path}' using enhanced fractal compression...")
 
     for idx, image_file in enumerate(image_files, start=1):
         image_path = os.path.join(original_path, image_file)
-        output_file = os.path.join(output_path, f"compressed_{os.path.splitext(image_file)[0]}.jpg")
+        compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        output_file = os.path.join(output_path, compressed_file)
         print(f"[Image {idx}/{limit}] Processing {image_file}...")
 
-        image = load_image(image_path)
-
+        try:
+            image = load_image(image_path)
+        except ValueError as e:
+            print(f"Error: {e}")
+            continue
 
         start_time = time.time()
         encoded_data, domain_blocks = encode_image_with_kdtree_manual(image, block_size)
         end_time = time.time()
-        total_time = getTime(end_time-start_time)
-        print(f"Decoding time: {total_time}")
+        encodingTime = round((end_time - start_time), 4)
 
         start_time = time.time()
         decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
         end_time = time.time()
-        total_time = getTime(end_time-start_time)
-        print(f"Decoding time: {total_time}")
+        decodingTime = round((end_time - start_time), 4)
 
-        evaluate_compression(image, image_path, output_file)
+        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime)
 
     print(f"***Finished compressing {limit} image/s***")
     sys.exit(1)
