@@ -110,6 +110,12 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
 
     print("Training complete")
 
+    # Save the trained model as a .pth file
+    os.makedirs(output_path, exist_ok=True)
+    model_path = os.path.join(output_path, "cnn_model.pth")
+    torch.save(model.state_dict(), model_path)
+    print(f"Trained model saved at {model_path}")
+
     # EXTRACTING FEATURES
     feature_vectors = []
     model.eval()
@@ -120,7 +126,6 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
             feature_vectors.append(features.cpu().numpy())
 
     feature_vectors = np.vstack(feature_vectors)
-    os.makedirs(output_path, exist_ok=True)
     np.save(os.path.join(output_path, "mri_features.npy"), feature_vectors)
     
     end_time = time.time()
