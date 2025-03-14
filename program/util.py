@@ -4,6 +4,7 @@ import numpy as np
 from skimage import io
 from skimage.metrics import peak_signal_noise_ratio as psnr, structural_similarity as ssim
 
+
 def getTime(total_time):
     if total_time < 60:
         return f"{total_time:.4f} seconds"
@@ -27,7 +28,7 @@ def evaluate_compression(image, original_image_path, compressed_image_path):
     compressed_image = np.clip(compressed_image, 0, 1)
 
     # PSNR and SSIM
-    PSNR = round(psnr(original_image, compressed_image, data_range=1.0), 2)
+    PSNR = round(psnr(original_image, compressed_image, data_range=1.0), 4)
     #print(f"\tPeak Signal-to-Noise Ratio (PSNR): {PSNR:.2f} dB")
 
     SSIM = round(ssim(original_image, compressed_image, data_range=1.0), 4)
@@ -51,11 +52,10 @@ def evaluate_compression(image, original_image_path, compressed_image_path):
     return original_size, compressed_size, CR_ratio, PSNR, SSIM
 
 
-def save_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime):
-    data_folder = "data"
-    os.makedirs(data_folder, exist_ok=True)
+def save_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime, bps,  data_folder):
+    os.makedirs(data_folder+"/csv", exist_ok=True)
 
-    csv_filename = os.path.join(data_folder, "compression_metrics.csv")
+    csv_filename = os.path.join(data_folder+"/csv", "compression_metrics.csv")
 
     # Check if the image already exists in the CSV file
     if os.path.isfile(csv_filename):
@@ -71,7 +71,7 @@ def save_csv(image, original_image_path, compressed_image_path, original_image, 
     original_size, compressed_size, cr, psnr, ssim = evaluate_compression(image, original_image_path, compressed_image_path)
 
     # prepare data for CSV
-    data = [original_image, original_size, compressed_image, compressed_size, cr, encodingTime, decodingTime, psnr, ssim]
+    data = [original_image, original_size, compressed_image, compressed_size, cr, encodingTime, decodingTime, psnr, ssim, bps]
 
     # Write to CSV
     file_exists = os.path.isfile(csv_filename)
@@ -81,7 +81,7 @@ def save_csv(image, original_image_path, compressed_image_path, original_image, 
         # Write the header only if the file does not exist
         if not file_exists:
             writer.writerow(["originalImage", "originalImage_size (KB)", "compressedImage", "compressedImage_size (KB)",
-                             "compressionRatio", "encodingTime (s)", "decodingTime (s)", "PSNR (dB)", "SSIM"])
+                             "compressionRatio", "encodingTime (s)", "decodingTime (s)", "PSNR (dB)", "SSIM", "blocks (blocks/s)"])
 
         # Write the data row
         writer.writerow(data)

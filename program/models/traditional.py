@@ -90,15 +90,21 @@ def encode_image(image, block_size=8):
 
     encoded_data = []
 
+    start_time = time.time()
     with ProcessPoolExecutor() as executor:
         results = list(tqdm(executor.map(encode_block, [(block, domain_blocks) for block in range_blocks]), 
                             total=len(range_blocks), desc="Encoding Image", unit="block", colour="red"))
         
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    bps = len(range_blocks) / elapsed_time if elapsed_time > 0 else 0
+    bps = round((bps), 4)
+
     for best_block, transformation in results:
         compressed_transformation = affine_transformation(transformation)
         encoded_data.append((best_block, compressed_transformation))
 
-    return encoded_data
+    return encoded_data, bps
 
 
 # decode the image
@@ -140,7 +146,7 @@ def run_traditional_compression(original_path, output_path, limit, block_size=8)
         image = load_image(image_path)
 
         start_time = time.time()
-        encoded_data = encode_image(image, block_size)
+        encoded_data, bps = encode_image(image, block_size)
         end_time = time.time()
         encodingTime = round((end_time-start_time), 4)
 
@@ -149,7 +155,7 @@ def run_traditional_compression(original_path, output_path, limit, block_size=8)
         end_time = time.time()
         decodingTime = round((end_time-start_time), 4)
 
-        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime)
+        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, output_path)
 
     print(f"***Finished compressing {limit} image(s)***")
     sys.exit(1)

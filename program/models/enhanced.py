@@ -178,7 +178,8 @@ def encode_image_with_kdtree_manual(image, block_size=8, cnn_model=None, device=
     transformation = (1.0, 0.0, 1, 1)
 
     print("Finding best matches using KD-tree...")
-    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="red") as pbar:
+    start_time = time.time()
+    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
         for idx, block in enumerate(range_blocks):
             # Extract features for current block
             feature = extract_features(block, cnn_model, device)
@@ -192,7 +193,12 @@ def encode_image_with_kdtree_manual(image, block_size=8, cnn_model=None, device=
             encoded_data.append((best_index, transformation))
             pbar.update(1)
 
-    return encoded_data, domain_blocks
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    bps = len(range_blocks) / elapsed_time if elapsed_time > 0 else 0
+    bps = round((bps), 4)
+
+    return encoded_data, domain_blocks, bps
 
 # Decode the image
 def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_file=None, output_path='data/compressed/fractal'):
@@ -248,7 +254,7 @@ def process_single_image(image_file, original_path, output_path, block_size, cnn
         return
 
     start_time = time.time()
-    encoded_data, domain_blocks = encode_image_with_kdtree_manual(image, block_size, cnn_model, device)
+    encoded_data, domain_blocks, bps = encode_image_with_kdtree_manual(image, block_size, cnn_model, device)
     end_time = time.time()
     encodingTime = round((end_time - start_time), 4)
 
@@ -257,7 +263,7 @@ def process_single_image(image_file, original_path, output_path, block_size, cnn
     end_time = time.time()
     decodingTime = round((end_time - start_time), 4)
 
-    save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime)
+    save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, output_path)
 
 def modify_checkpoint(model_path, new_model):
     checkpoint = torch.load(model_path, map_location="cpu")
