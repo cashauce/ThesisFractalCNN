@@ -8,74 +8,52 @@ from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
 from skimage.io import imsave
 from tqdm import tqdm
+import torch
+import torchvision.transforms as transforms
+from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+from skimage.color import rgb2gray
+from program.CNN_model import CNNModel  # Import the custom CNNModel class
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
 
+# Load pre-trained MobileNetV2 model for feature extraction
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def load_cnn_model(model_path, device, input_size=64):
+    model = CNNModel(input_size=input_size).to(device)
+    checkpoint = torch.load(model_path, map_location=device)
+
+    # Adjust the checkpoint to match the current model's structure
+    checkpoint_state_dict = checkpoint
+    model_state_dict = model.state_dict()
+
+    for key in checkpoint_state_dict.keys():
+        if key in model_state_dict and checkpoint_state_dict[key].shape != model_state_dict[key].shape:
+            print(f"Resizing layer: {key} from {checkpoint_state_dict[key].shape} to {model_state_dict[key].shape}")
+            if "weight" in key:
+                checkpoint_state_dict[key] = torch.nn.functional.interpolate(
+                    checkpoint_state_dict[key].unsqueeze(0).unsqueeze(0),
+                    size=model_state_dict[key].shape,
+                    mode="nearest"
+                ).squeeze(0).squeeze(0)
+            elif "bias" in key:
+                checkpoint_state_dict[key] = torch.zeros_like(model_state_dict[key])
+
+    # Load the adjusted checkpoint
+    model.load_state_dict(checkpoint_state_dict, strict=False)
+    model.eval()
+    return model
 
 def load_image(file_path, target_size=(256, 256)):
-    image = io.imread(file_path, as_gray=True)
-    image = transform.resize(image, target_size, anti_aliasing=True) 
-    image = (image - np.min(image)) / (np.max(image) - np.min(image)) 
-    return image.astype(np.float32)
+    try:
+        image = io.imread(file_path, as_gray=True)
+        image = transform.resize(image, target_size, anti_aliasing=True)
+        image = (image - np.min(image)) / (np.max(image) - np.min(image))  # Normalize to [0, 1]
+        return image.astype(np.float32)
+    except Exception as e:
+        raise ValueError(f"Error loading image at {file_path}: {e}")
 
-# KD-tree node class
-class KDNode:
-    def __init__(self, point, left=None, right=None):
-        self.point = point  # the block vector
-        self.left = left    # left child
-        self.right = right  # right child
-
-# build KD-tree manually
-def build_kdtree(points, depth=0):
-    if not points:
-        return None
-
-    k = len(points[0])  # block vector length
-    axis = depth % k
-
-    points.sort(key=lambda x: x[axis])
-    median = len(points) // 2 
-
-    # create node and construct subtrees
-    return KDNode(
-        point=points[median],
-        left=build_kdtree(points[:median], depth + 1),
-        right=build_kdtree(points[median + 1:], depth + 1)
-    )
-
-# calculate euclidean distance
-def euclidean_distance(point1, point2):
-    return np.sqrt(np.sum((np.array(point1) - np.array(point2)) ** 2))
-
-# find nearest neighbor in the KD-tree
-def kdtree_nearest_neighbor(node, target, depth=0, best=None):
-    if node is None:
-        return best
-
-    k = len(target)
-    axis = depth % k
-
-    # update best if the current node is closer
-    if best is None or euclidean_distance(target, node.point) < euclidean_distance(target, best):
-        best = node.point
-
-    next_branch = None
-    opposite_branch = None
-    if target[axis] < node.point[axis]:
-        next_branch = node.left
-        opposite_branch = node.right
-    else:
-        next_branch = node.right
-        opposite_branch = node.left
-
-    # search the next branch
-    best = kdtree_nearest_neighbor(next_branch, target, depth + 1, best)
-
-    # check the other branch if necessary
-    if abs(target[axis] - node.point[axis]) < euclidean_distance(target, best):
-        best = kdtree_nearest_neighbor(opposite_branch, target, depth + 1, best)
-
-    return best
-
-# partition image into smaller blocks
+# Partition image into smaller blocks
 def partition_image(image, block_size):
     h, w = image.shape[:2]
     blocks = []
@@ -88,12 +66,10 @@ def partition_image(image, block_size):
             blocks.append(block)
     return blocks
 
-# apply affine transformation
-# hindi pa nagagamit sa encoding yung affine transformation 
+# Apply affine transformation
 def apply_affine_transformation(block, transformation):
     scale, rotation, tx, ty = transformation
     h, w = block.shape
-    #center_y, center_x = h // 2, w // 2
 
     transformation_matrix = np.array([
         [scale * np.cos(rotation), -scale * np.sin(rotation), tx],
@@ -111,64 +87,129 @@ def apply_affine_transformation(block, transformation):
     y_transformed = np.clip(y_transformed, 0, h - 1).astype(np.int32)
 
     transformed_block = block[y_transformed, x_transformed]
-    #print(transformed_block)
-
     return transformed_block
 
+def extract_features(block, cnn_model, device):
+    block_tensor = torch.tensor(block, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
+    with torch.no_grad():
+        return cnn_model(block_tensor).squeeze().cpu().numpy()
 
-def find_best_match_kdtree_manual(block, kd_tree, domain_blocks, transformation):
-    block_vector = block.flatten()  
-    best_vector = kdtree_nearest_neighbor(kd_tree, block_vector)
-    best_index = [np.array_equal(best_vector, b.flatten()) for b in domain_blocks].index(True)
+def extract_features_batch(blocks, cnn_model, device, batch_size=64):
+    n_blocks = len(blocks)
+    features = []
+    
+    # Convert blocks to tensor in batches
+    for i in range(0, n_blocks, batch_size):
+        batch = blocks[i:i + batch_size]
+        batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in batch]).to(device)
+        with torch.no_grad():
+            batch_features = cnn_model(batch_tensor).cpu().numpy()
+        features.append(batch_features)
+    
+    return np.vstack(features)
 
-    #transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
-    transformed_block = None
+class KDNode:
+    def __init__(self, point, index, left=None, right=None):
+        self.point = point  # the feature vector
+        self.index = index  # index of the original block
+        self.left = left
+        self.right = right
 
-    return best_index, transformation, transformed_block
+def build_kdtree(points, indices, depth=0):
+    if len(points) == 0:
+        return None
 
+    k = points.shape[1]  # feature vector dimension
+    axis = depth % k
 
-# encode image with KD-tree
-def encode_image_with_kdtree_manual(image, block_size=8):
+    # Sort points and indices together based on the current axis
+    sorted_indices = np.argsort(points[:, axis])
+    points = points[sorted_indices]
+    indices = indices[sorted_indices]
+    
+    median = len(points) // 2
+
+    return KDNode(
+        point=points[median],
+        index=indices[median],
+        left=build_kdtree(points[:median], indices[:median], depth + 1),
+        right=build_kdtree(points[median + 1:], indices[median + 1:], depth + 1)
+    )
+
+def find_nearest_in_kdtree(node, target, best=None, best_dist=float('inf'), depth=0):
+    if node is None:
+        return best, best_dist
+
+    k = len(target)
+    axis = depth % k
+    
+    current_dist = np.sum((node.point - target) ** 2)
+    
+    if current_dist < best_dist:
+        best = node
+        best_dist = current_dist
+
+    if target[axis] < node.point[axis]:
+        first, second = node.left, node.right
+    else:
+        first, second = node.right, node.left
+
+    best, best_dist = find_nearest_in_kdtree(first, target, best, best_dist, depth + 1)
+    
+    if abs(target[axis] - node.point[axis]) ** 2 < best_dist:
+        best, best_dist = find_nearest_in_kdtree(second, target, best, best_dist, depth + 1)
+    
+    return best, best_dist
+
+def encode_image_with_kdtree_manual(image, block_size=8, cnn_model=None, device=None):
     range_blocks = partition_image(image, block_size)
     domain_blocks = partition_image(image, block_size)
 
-    # flatten domain blocks and build KD-tree
-    domain_vectors = [block.flatten() for block in domain_blocks]
-    kd_tree = build_kdtree(domain_vectors)
+    # Extract CNN features in batches for better performance
+    print("Extracting features for domain blocks...")
+    domain_features = extract_features_batch(domain_blocks, cnn_model, device)
+    
+    # Build KD-tree using domain features
+    print("Building KD-tree...")
+    domain_indices = np.arange(len(domain_blocks))
+    kd_tree = build_kdtree(domain_features, domain_indices)
 
     encoded_data = []
+    transformation = (1.0, 0.0, 1, 1)
 
-    # example transformation (rotation, scaling, translation)
-    transformation = (1.0, 0.0, 1, 1)  # no scaling, no rotation, and translation by (1, 1)
-
+    print("Finding best matches using KD-tree...")
     with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="red") as pbar:
-        for block in range_blocks:
-            best_index, _ , transformed_block = find_best_match_kdtree_manual(block, kd_tree, domain_blocks, transformation)
-            encoded_data.append((best_index, transformation))  # store best index and transformation
+        for idx, block in enumerate(range_blocks):
+            # Extract features for current block
+            feature = extract_features(block, cnn_model, device)
+            
+            # Find best match using KD-tree
+            best_node, _ = find_nearest_in_kdtree(kd_tree, feature)
+            best_index = best_node.index
+            
+            # Apply transformation
+            transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
+            encoded_data.append((best_index, transformation))
             pbar.update(1)
 
     return encoded_data, domain_blocks
 
-
-
-# decode the image
+# Decode the image
 def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_file=None, output_path='data/compressed/fractal'):
     os.makedirs(output_path, exist_ok=True)
     reconstructed_image = np.zeros(image_shape, dtype=np.float64)
     h, w = image_shape
     idx = 0
 
-    # decode the data from the raw binary format and include transformation info
+    # Decode the data from the raw binary format and include transformation info
     decoded_data = [(int(entry[0]), entry[1]) for entry in encoded_data]
 
     for i in range(0, h, block_size):
         for j in range(0, w, block_size):
             if idx < len(decoded_data):
                 best_index, transformation = decoded_data[idx]
-
                 transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
                 reconstructed_image[i:i + block_size, j:j + block_size] = transformed_block
-                
                 idx += 1
 
     reconstructed_image = np.clip(reconstructed_image, 0, 1)
@@ -176,37 +217,62 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
         reconstructed_image = rescale_intensity(reconstructed_image, in_range='image', out_range=(0, 1))
 
     reconstructed_image = img_as_ubyte(reconstructed_image)
-
-    # save the reconstructed image
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     imsave(output_file, reconstructed_image)
 
-
-# function to compress and evaluate images in a folder using fractal compression
+# Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
+    cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
+    cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
+
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    image_files = image_files[:limit]
+    image_files = image_files[:limit]  # Limit the number of images to process
     print(f"Compressing {limit} image/s in '{original_path}' using enhanced fractal compression...")
 
     for idx, image_file in enumerate(image_files, start=1):
-        image_path = os.path.join(original_path, image_file)
-        compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
-        output_file = os.path.join(output_path, compressed_file)
-        print(f"[Image {idx}/{limit}] Processing {image_file}...")
-
-        image = load_image(image_path)
-
-        start_time = time.time()
-        encoded_data, domain_blocks = encode_image_with_kdtree_manual(image, block_size)
-        end_time = time.time()
-        encodingTime = round((end_time-start_time), 4)
-
-        start_time = time.time()
-        decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
-        end_time = time.time()
-        decodingTime = round((end_time-start_time), 4)
-
-        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime)
+        process_single_image(image_file, original_path, output_path, block_size, cnn_model, device)
 
     print(f"***Finished compressing {limit} image/s***")
     sys.exit(1)
+
+def process_single_image(image_file, original_path, output_path, block_size, cnn_model, device):
+    image_path = os.path.join(original_path, image_file)
+    compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+    output_file = os.path.join(output_path, compressed_file)
+    print(f"Processing {image_file}...")
+
+    try:
+        image = load_image(image_path)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
+
+    start_time = time.time()
+    encoded_data, domain_blocks = encode_image_with_kdtree_manual(image, block_size, cnn_model, device)
+    end_time = time.time()
+    encodingTime = round((end_time - start_time), 4)
+
+    start_time = time.time()
+    decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
+    end_time = time.time()
+    decodingTime = round((end_time - start_time), 4)
+
+    save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime)
+
+def modify_checkpoint(model_path, new_model):
+    checkpoint = torch.load(model_path, map_location="cpu")
+    new_state_dict = new_model.state_dict()
+
+    # Remove mismatched layers
+    for key in list(checkpoint.keys()):
+        if key not in new_state_dict or checkpoint[key].shape != new_state_dict[key].shape:
+            print(f"Removing mismatched layer: {key}")
+            del checkpoint[key]
+
+    # Load the modified checkpoint into the new model
+    new_model.load_state_dict(checkpoint, strict=False)
+    return new_model
+
+# Example usage
+# cnn_model = CNNModel().to(device)
+# cnn_model = modify_checkpoint("data/features/cnn_model.pth", cnn_model)
