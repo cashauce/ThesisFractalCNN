@@ -27,32 +27,50 @@ class MRIDataset(Dataset):
 
 # DEFINE CNN MODEL
 class CNNModel(nn.Module):
-    def __init__(self, input_size=64):  # Ensure input_size is a valid parameter
+    def __init__(self, input_size=256):  # Changed default input size to match image size
         super(CNNModel, self).__init__()
 
         self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1)
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.dropout = nn.Dropout(0.25)
 
-        # Dynamically calculate the flattened size
+        # Calculate the flattened size
         self.input_size = input_size
         self.flattened_size = self._calculate_flattened_size()
-
+        
+        # Adjust fully connected layer
         self.fc1 = nn.Linear(self.flattened_size, 128)
+        self.fc_dropout = nn.Dropout(0.5)
 
     def _calculate_flattened_size(self):
-        # Pass a dummy tensor through the layers to determine the flattened size
         dummy_input = torch.zeros(1, 1, self.input_size, self.input_size)
-        x = self.pool(F.relu(self.conv1(dummy_input)))
-        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv1(dummy_input)))  # 128x128
+        x = self.pool(F.relu(self.conv2(x)))           # 64x64
+        x = self.pool(F.relu(self.conv3(x)))          # 32x32
         return x.numel()
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))  # First convolution + pooling
-        x = self.pool(F.relu(self.conv2(x)))  # Second convolution + pooling
-        x = x.view(x.shape[0], -1)  # Flatten the tensor
-        x = self.fc1(x)  # Fully connected layer
+        # Print shape for debugging
+        # print(f"Input shape: {x.shape}")
+        
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.dropout(x)
+        
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.dropout(x)
+        
+        x = self.pool(F.relu(self.conv3(x)))
+        x = self.dropout(x)
+        
+        x = x.view(x.size(0), -1)  # Flatten
+        # print(f"After flatten shape: {x.shape}")
+        
+        x = F.relu(self.fc1(x))
+        x = self.fc_dropout(x)
+        
         return x
 
 
