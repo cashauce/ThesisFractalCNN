@@ -134,28 +134,36 @@ def decode_image(encoded_data, image_shape, block_size=8, output_file=None, outp
 # Function to compress and evaluate images in a folder
 def run_traditional_compression(original_path, output_path, limit, block_size=8):
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    image_files = image_files[:limit]
     print(f"Compressing {limit} image(s) in '{original_path}' using fractal compression...")
 
-    for idx, image_file in enumerate(image_files, start=1):
-        image_path = os.path.join(original_path, image_file)
+    os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
+
+    processed_count = 0  # Count of newly compressed images
+    for image_file in image_files:
+        if processed_count >= limit:
+            break  # Stop when we have compressed 'limit' new images
+
         compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
         output_file = os.path.join(output_path, compressed_file)
-        print(f"[Image {idx}/{limit}] Processing {image_file}...")
 
+        # Skip if already compressed
+        if os.path.exists(output_file):
+            print(f"[SKIPPED] {image_file} already compressed.")
+            continue
+
+        print(f"[Processing {processed_count+1}/{limit}] {image_file}...")
+        image_path = os.path.join(original_path, image_file)
         image = load_image(image_path)
 
         start_time = time.time()
         encoded_data, bps = encode_image(image, block_size)
-        end_time = time.time()
-        encodingTime = round((end_time-start_time), 4)
+        encodingTime = round(time.time() - start_time, 4)
 
         start_time = time.time()
         decode_image(encoded_data, image.shape, block_size, output_file=output_file, output_path=output_path)
-        end_time = time.time()
-        decodingTime = round((end_time-start_time), 4)
+        decodingTime = round(time.time() - start_time, 4)
 
         save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, output_path)
+        processed_count += 1
 
-    print(f"***Finished compressing {limit} image(s)***")
-    sys.exit(1)
+    print(f"***Finished compressing {processed_count} new image(s).***")

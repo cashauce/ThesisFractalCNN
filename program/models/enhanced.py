@@ -223,44 +223,50 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     imsave(output_file, reconstructed_image)
 
+
 # Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
     cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
     cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
 
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    image_files = image_files[:limit]  # Limit the number of images to process
     print(f"Compressing {limit} image/s in '{original_path}' using enhanced fractal compression...")
 
-    for idx, image_file in enumerate(image_files, start=1):
-        process_single_image(image_file, original_path, output_path, block_size, cnn_model, device)
+    os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
+
+    processed_count = 0  # Count of newly compressed images
+    for image_file in image_files:
+        if processed_count >= limit:
+            break  # Stop when we have compressed 'limit' new images
+
+        compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        output_file = os.path.join(output_path, compressed_file)
+
+        # Skip if already compressed
+        if os.path.exists(output_file):
+            print(f"[SKIPPED] {image_file} already compressed.")
+            continue
+
+        print(f"[Processing {processed_count+1}/{limit}] {image_file}...")
+        image_path = os.path.join(original_path, image_file)
+        image = load_image(image_path)
+
+        start_time = time.time()
+        encoded_data, domain_blocks, bps = encode_image_with_kdtree_manual(image, block_size, cnn_model, device)
+        end_time = time.time()
+        encodingTime = round((end_time - start_time), 4)
+
+        start_time = time.time()
+        decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
+        end_time = time.time()
+        decodingTime = round((end_time - start_time), 4)
+
+        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, output_path)
+        processed_count += 1
 
     print(f"***Finished compressing {limit} image/s***")
     sys.exit(1)
 
-def process_single_image(image_file, original_path, output_path, block_size, cnn_model, device):
-    image_path = os.path.join(original_path, image_file)
-    compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
-    output_file = os.path.join(output_path, compressed_file)
-    print(f"Processing {image_file}...")
-
-    try:
-        image = load_image(image_path)
-    except ValueError as e:
-        print(f"Error: {e}")
-        return
-
-    start_time = time.time()
-    encoded_data, domain_blocks, bps = encode_image_with_kdtree_manual(image, block_size, cnn_model, device)
-    end_time = time.time()
-    encodingTime = round((end_time - start_time), 4)
-
-    start_time = time.time()
-    decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
-    end_time = time.time()
-    decodingTime = round((end_time - start_time), 4)
-
-    save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, output_path)
 
 def modify_checkpoint(model_path, new_model):
     checkpoint = torch.load(model_path, map_location="cpu")
