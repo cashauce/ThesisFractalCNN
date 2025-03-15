@@ -166,18 +166,15 @@ def encode_image_with_kdtree_manual(image, block_size=8, cnn_model=None, device=
     domain_blocks = partition_image(image, block_size)
 
     # Extract CNN features in batches for better performance
-    print("Extracting features for domain blocks...")
     domain_features = extract_features_batch(domain_blocks, cnn_model, device)
     
     # Build KD-tree using domain features
-    print("Building KD-tree...")
     domain_indices = np.arange(len(domain_blocks))
     kd_tree = build_kdtree(domain_features, domain_indices)
 
     encoded_data = []
     transformation = (1.0, 0.0, 1, 1)
 
-    print("Finding best matches using KD-tree...")
     start_time = time.time()
     with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
         for idx, block in enumerate(range_blocks):

@@ -71,7 +71,9 @@ def save_csv(image, original_image_path, compressed_image_path, original_image, 
     original_size, compressed_size, cr, psnr, ssim = evaluate_compression(image, original_image_path, compressed_image_path)
 
     # prepare data for CSV
-    data = [original_image, original_size, compressed_image, compressed_size, cr, encodingTime, decodingTime, psnr, ssim, bps]
+    data = [original_image, original_size, original_image_path, 
+            compressed_image, compressed_size, compressed_image_path, 
+            cr, encodingTime, decodingTime, psnr, ssim, bps]
 
     # Write to CSV
     file_exists = os.path.isfile(csv_filename)
@@ -80,7 +82,8 @@ def save_csv(image, original_image_path, compressed_image_path, original_image, 
 
         # Write the header only if the file does not exist
         if not file_exists:
-            writer.writerow(["originalImage", "originalImage_size (KB)", "compressedImage", "compressedImage_size (KB)",
+            writer.writerow(["originalImage", "original_image_path", "originalImage_size (KB)",
+                             "compressedImage", "compressedImage_size (KB)", "compressed_image_path",
                              "compressionRatio", "encodingTime (s)", "decodingTime (s)", "PSNR (dB)", "SSIM", "blocks (blocks/s)"])
 
         # Write the data row
