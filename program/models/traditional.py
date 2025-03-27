@@ -6,7 +6,7 @@ from skimage import io, transform, img_as_ubyte
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
 from skimage.io import imsave
-from program.util import save_csv
+from program.util import compression_traditional_csv
 from tqdm import tqdm
 import zlib
 from concurrent.futures import ProcessPoolExecutor
@@ -163,7 +163,7 @@ def run_traditional_compression(original_path, output_path, limit, block_size=8)
         decode_image(encoded_data, image.shape, block_size, output_file=output_file, output_path=output_path)
         decodingTime = round(time.time() - start_time, 4)
 
-        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, "compressed_traditional_CSV.csv")
+        compression_traditional_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, "compressed_traditional_CSV.csv")
         processed_count += 1
 
     print(f"***Finished compressing {processed_count} new image(s).***")

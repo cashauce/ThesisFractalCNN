@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 import time
-from program.util import save_csv
+from program.util import compression_enhanced_csv
 from skimage import io, img_as_ubyte, transform
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
@@ -91,8 +91,13 @@ def apply_affine_transformation(block, transformation):
 
 def extract_features(block, cnn_model, device):
     block_tensor = torch.tensor(block, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
+    start_time = time.time()
     with torch.no_grad():
-        return cnn_model(block_tensor).squeeze().cpu().numpy()
+        features = cnn_model(block_tensor).squeeze().cpu().numpy()
+    end_time = time.time()
+    inference_time = round((end_time - start_time) * 1000, 4)
+
+    return features, inference_time
 
 def extract_features_batch(blocks, cnn_model, device, batch_size=64):
     n_blocks = len(blocks)
@@ -170,20 +175,25 @@ def encode_image_with_kdtree_manual(image, block_size=8, cnn_model=None, device=
     
     # Build KD-tree using domain features
     domain_indices = np.arange(len(domain_blocks))
+    start_time = time.time()
     kd_tree = build_kdtree(domain_features, domain_indices)
+    end_time = time.time()
+    buildingTree_time = round((end_time - start_time) * 1000, 4)
 
     encoded_data = []
     transformation = (1.0, 0.0, 1, 1)
-
     start_time = time.time()
     with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
         for idx, block in enumerate(range_blocks):
             # Extract features for current block
-            feature = extract_features(block, cnn_model, device)
+            feature, inference_time = extract_features(block, cnn_model, device)
             
             # Find best match using KD-tree
+            start_time = time.time()
             best_node, _ = find_nearest_in_kdtree(kd_tree, feature)
             best_index = best_node.index
+            end_time = time.time()
+            nearestSearch_time = round((end_time - start_time) * 1000, 4)
             
             # Apply transformation
             transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
@@ -195,7 +205,7 @@ def encode_image_with_kdtree_manual(image, block_size=8, cnn_model=None, device=
     bps = len(range_blocks) / elapsed_time if elapsed_time > 0 else 0
     bps = round((bps), 4)
 
-    return encoded_data, domain_blocks, bps
+    return encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time
 
 # Decode the image
 def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_file=None, output_path='data/compressed/fractal'):
@@ -252,7 +262,7 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
         image = load_image(image_path)
 
         start_time = time.time()
-        encoded_data, domain_blocks, bps = encode_image_with_kdtree_manual(image, block_size, cnn_model, device)
+        encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_kdtree_manual(image, block_size, cnn_model, device)
         end_time = time.time()
         encodingTime = round((end_time - start_time), 4)
 
@@ -261,7 +271,8 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
         end_time = time.time()
         decodingTime = round((end_time - start_time), 4)
 
-        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, "compressed_proposed_CSV.csv")
+        compression_enhanced_csv(image, image_path, output_file, image_file, compressed_file, 
+                        buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "compressed_enhanced_CSV.csv")
         processed_count += 1
 
     print(f"***Finished compressing {limit} image/s***")
