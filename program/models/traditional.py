@@ -163,7 +163,7 @@ def run_traditional_compression(original_path, output_path, limit, block_size=8)
         decode_image(encoded_data, image.shape, block_size, output_file=output_file, output_path=output_path)
         decodingTime = round(time.time() - start_time, 4)
 
-        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, output_path)
+        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, "compressed_traditional_CSV.csv")
         processed_count += 1
 
     print(f"***Finished compressing {processed_count} new image(s).***")

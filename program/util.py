@@ -52,10 +52,10 @@ def evaluate_compression(image, original_image_path, compressed_image_path):
     return original_size, compressed_size, CR_ratio, PSNR, SSIM
 
 
-def save_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime, bps,  data_folder):
-    os.makedirs(data_folder+"/csv", exist_ok=True)
+def save_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime, bps,  csvFile_name):
+    os.makedirs("data/csv", exist_ok=True)
 
-    csv_filename = os.path.join(data_folder+"/csv", "compression_metrics.csv")
+    csv_filename = os.path.join("data/csv", csvFile_name)
 
     # Check if the image already exists in the CSV file
     if os.path.isfile(csv_filename):

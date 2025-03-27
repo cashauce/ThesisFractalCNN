@@ -261,7 +261,7 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
         end_time = time.time()
         decodingTime = round((end_time - start_time), 4)
 
-        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, output_path)
+        save_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, "compressed_proposed_CSV.csv")
         processed_count += 1
 
     print(f"***Finished compressing {limit} image/s***")
