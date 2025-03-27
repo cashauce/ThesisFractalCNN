@@ -82,7 +82,7 @@ def save_csv(image, original_image_path, compressed_image_path, original_image, 
 
         # Write the header only if the file does not exist
         if not file_exists:
-            writer.writerow(["originalImage", "original_image_path", "originalImage_size (KB)",
+            writer.writerow(["originalImage", "originalImage_size (KB)", "original_image_path",
                              "compressedImage", "compressedImage_size (KB)", "compressed_image_path",
                              "compressionRatio", "encodingTime (s)", "decodingTime (s)", "PSNR (dB)", "SSIM", "blocks (blocks/s)"])
 
