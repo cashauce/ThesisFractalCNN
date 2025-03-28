@@ -113,84 +113,90 @@ def extract_features_batch(blocks, cnn_model, device, batch_size=64):
     
     return np.vstack(features)
 
-class KDNode:
-    def __init__(self, point, index, left=None, right=None):
-        self.point = point  # the feature vector
-        self.index = index  # index of the original block
+class VPNode:
+    def __init__(self, point, index, threshold=None, left=None, right=None):
+        self.point = point  # Feature vector
+        self.index = index  # Index of the original block
+        self.threshold = threshold  # Distance threshold for left/right partitioning
         self.left = left
         self.right = right
 
-def build_kdtree(points, indices, depth=0):
+def build_vptree(points, indices):
     if len(points) == 0:
         return None
-
-    k = points.shape[1]  # feature vector dimension
-    axis = depth % k
-
-    # Sort points and indices together based on the current axis
-    sorted_indices = np.argsort(points[:, axis])
+    
+    # Choose a random vantage point
+    vantage_index = np.random.randint(len(points))
+    vantage_point = points[vantage_index]
+    vantage_idx = indices[vantage_index]
+    
+    # Compute distances to the vantage point
+    distances = np.linalg.norm(points - vantage_point, axis=1)
+    sorted_indices = np.argsort(distances)
     points = points[sorted_indices]
     indices = indices[sorted_indices]
+    distances = distances[sorted_indices]
     
     median = len(points) // 2
-
-    return KDNode(
-        point=points[median],
-        index=indices[median],
-        left=build_kdtree(points[:median], indices[:median], depth + 1),
-        right=build_kdtree(points[median + 1:], indices[median + 1:], depth + 1)
+    threshold = distances[median] if median < len(points) else None
+    
+    return VPNode(
+        point=vantage_point,
+        index=vantage_idx,
+        threshold=threshold,
+        left=build_vptree(points[:median], indices[:median]),
+        right=build_vptree(points[median + 1:], indices[median + 1:])
     )
 
-def find_nearest_in_kdtree(node, target, best=None, best_dist=float('inf'), depth=0):
+def find_nearest_in_vptree(node, target, best=None, best_dist=float('inf')):
     if node is None:
         return best, best_dist
-
-    k = len(target)
-    axis = depth % k
     
-    current_dist = np.sum((node.point - target) ** 2)
+    current_dist = np.linalg.norm(node.point - target)
     
     if current_dist < best_dist:
         best = node
         best_dist = current_dist
-
-    if target[axis] < node.point[axis]:
-        first, second = node.left, node.right
-    else:
-        first, second = node.right, node.left
-
-    best, best_dist = find_nearest_in_kdtree(first, target, best, best_dist, depth + 1)
     
-    if abs(target[axis] - node.point[axis]) ** 2 < best_dist:
-        best, best_dist = find_nearest_in_kdtree(second, target, best, best_dist, depth + 1)
+    if node.threshold is None:
+        return best, best_dist
+    
+    if current_dist < node.threshold:
+        best, best_dist = find_nearest_in_vptree(node.left, target, best, best_dist)
+        if current_dist + best_dist >= node.threshold:
+            best, best_dist = find_nearest_in_vptree(node.right, target, best, best_dist)
+    else:
+        best, best_dist = find_nearest_in_vptree(node.right, target, best, best_dist)
+        if current_dist - best_dist <= node.threshold:
+            best, best_dist = find_nearest_in_vptree(node.left, target, best, best_dist)
     
     return best, best_dist
 
-def encode_image_with_kdtree(image, block_size=8, cnn_model=None, device=None):
+def encode_image_with_vptree(image, block_size=8, cnn_model=None, device=None):
     range_blocks = partition_image(image, block_size)
     domain_blocks = partition_image(image, block_size)
 
     # Extract CNN features in batches for better performance
     domain_features = extract_features_batch(domain_blocks, cnn_model, device)
     
-    # Build KD-tree using domain features
+    # Build VP-tree using domain features
     domain_indices = np.arange(len(domain_blocks))
     start_time = time.time()
-    kd_tree = build_kdtree(domain_features, domain_indices)
+    vp_tree = build_vptree(domain_features, domain_indices)
     end_time = time.time()
     buildingTree_time = round((end_time - start_time) * 1000, 4)
 
     encoded_data = []
     transformation = (1.0, 0.0, 1, 1)
     start_time = time.time()
-    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
+    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="blue") as pbar:
         for idx, block in enumerate(range_blocks):
             # Extract features for current block
             feature, inference_time = extract_features(block, cnn_model, device)
             
-            # Find best match using KD-tree
+            # Find best match using VP-tree
             start_time = time.time()
-            best_node, _ = find_nearest_in_kdtree(kd_tree, feature)
+            best_node, _ = find_nearest_in_vptree(vp_tree, feature)
             best_index = best_node.index
             end_time = time.time()
             nearestSearch_time = round((end_time - start_time) * 1000, 4)
@@ -235,7 +241,7 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
 
 
 # Function to compress and evaluate images in a folder using fractal compression
-def run_enhanced_compression(original_path, output_path, limit, block_size=8):
+def run_VPtree_compression(original_path, output_path, limit, block_size=8):
     cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
     cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
 
@@ -262,7 +268,7 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
         image = load_image(image_path)
 
         start_time = time.time()
-        encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_kdtree(image, block_size, cnn_model, device)
+        encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_vptree(image, block_size, cnn_model, device)
         end_time = time.time()
         encodingTime = round((end_time - start_time), 4)
 
@@ -272,7 +278,7 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
         decodingTime = round((end_time - start_time), 4)
 
         compression_hybrid_csv(image, image_path, output_file, image_file, compressed_file, 
-                        buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "compressed_enhanced_CSV.csv")
+                        buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "compressed_VPtree_CSV.csv")
         processed_count += 1
 
     print(f"***Finished compressing {limit} image/s***")

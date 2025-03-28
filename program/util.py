@@ -92,7 +92,7 @@ def compression_traditional_csv(image, original_image_path, compressed_image_pat
     print(f"Metrics saved to {csv_filename}")
 
 
-def compression_enhanced_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, 
+def compression_hybrid_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, 
                              buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps,  csvFile_name):
     os.makedirs("data/csv", exist_ok=True)
 

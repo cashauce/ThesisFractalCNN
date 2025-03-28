@@ -1,6 +1,7 @@
 import sys
 import argparse
 from program.models.traditional import run_traditional_compression
+from program.models.vp_tree import run_VPtree_compression
 from program.models.enhanced import run_enhanced_compression
 from program.CNN_model import train_cnn_model
 from program.preprocess_module import preprocess_images
@@ -15,9 +16,9 @@ if __name__ == "__main__":
     # Argument for choosing which part of the pipeline to run
     parser.add_argument(
         "--part",
-        choices=["traditional", "enhanced", "preprocess", "train"],
+        choices=["traditional", "vp_tree", "enhanced", "preprocess", "train"],
         required=True,
-        help="Select the pipeline part to run: train, preprocess, traditional, or enhanced compression"
+        help="Select the pipeline part to run: train, preprocess, traditional, vp-tree + CNN, or enhanced compression"
     )
     
     # Arguments for fractal and CNN compression
@@ -50,9 +51,15 @@ if __name__ == "__main__":
             sys.exit(1)
         run_traditional_compression(args.original_path, args.output_path+"/traditional",  limit=args.limit)
 
+    elif args.part == "vp_tree":
+        if not args.original_path:
+            print("Error: --original_path is required for the VP-tree + CNN compression.")
+            sys.exit(1)
+        run_VPtree_compression(args.original_path, args.output_path+"/vp_tree", limit=args.limit)
+
     elif args.part == "enhanced":
         if not args.original_path:
-            print("Error: --original_path is required for the hybrid compression.")
+            print("Error: --original_path is required for the KD-tree + CNN compression.")
             sys.exit(1)
         run_enhanced_compression(args.original_path, args.output_path+"/enhanced", limit=args.limit)
 
@@ -74,6 +81,9 @@ if __name__ == "__main__":
 
 #   traditional                                       "data/dataset/pituitary"   --limit = no. of data to be use (remove if ALL)
 #   python main.py --part traditional --original_path "data/dataset/glioma" --limit 1
+
+#   vp-tree                                       "data/dataset/pituitary"
+#   python main.py --part vp_tree --original_path "data/dataset/glioma" --limit 5
 
 #   enhanced                                       "data/dataset/pituitary"
 #   python main.py --part enhanced --original_path "data/dataset/glioma" --limit 5
