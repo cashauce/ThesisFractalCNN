@@ -168,45 +168,35 @@ def find_nearest_in_kdtree(node, target, best=None, best_dist=float('inf'), dept
     return best, best_dist
 
 def encode_image_with_kdtree(image, block_size=8, cnn_model=None, device=None):
-    # Use larger batch size and single feature extraction
-    batch_size = 256  # Increased from 64 to 256
     range_blocks = partition_image(image, block_size)
-    domain_blocks = range_blocks
+    domain_blocks = range_blocks  # Use same blocks for both to reduce computation
 
-    # Extract features in one go with larger batch
+    # Extract all features at once in a single batch
     start_time = time.time()
-    batches = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in domain_blocks])
-    features_list = []
-    
+    batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in domain_blocks]).to(device)
     with torch.no_grad():
-        for i in range(0, len(batches), batch_size):
-            batch = batches[i:i + batch_size].to(device)
-            features, _ = cnn_model(batch)
-            features_list.append(features.cpu().numpy())
-            del features
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
-    
-    all_features = np.vstack(features_list)
+        all_features, _ = cnn_model(batch_tensor)
+        all_features = all_features.view(all_features.size(0), -1).cpu().numpy()
     inference_time = round((time.time() - start_time) * 1000, 4)
-    
-    # Quick KD-tree build
+
+    # Build KD-tree using domain features
     start_time = time.time()
     domain_indices = np.arange(len(domain_blocks))
     kd_tree = build_kdtree(all_features, domain_indices)
     buildingTree_time = round((time.time() - start_time) * 1000, 4)
 
-    # Fast nearest neighbor search
+    # Search for nearest neighbors
     encoded_data = []
+    transformation = (1.0, 0.0, 1, 1)  # Fixed transformation
     total_search_time = 0
-    transformation = (1.0, 0.0, 1, 1)
     
     start_encoding = time.time()
-    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green", ncols=80) as pbar:
-        # Use numpy operations for faster search
-        for feature in all_features:
+    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
+        for feature in all_features:  # Use pre-computed features
             search_start = time.time()
             best_node, _ = find_nearest_in_kdtree(kd_tree, feature)
             total_search_time += time.time() - search_start
+            
             encoded_data.append((best_node.index, transformation))
             pbar.update(1)
 
