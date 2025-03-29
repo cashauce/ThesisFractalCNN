@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 import time
-from program.util import save_csv
+from program.util import compression_hybrid_csv
 from skimage import io, img_as_ubyte, transform
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
@@ -18,30 +18,29 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Load pre-trained MobileNetV2 model for feature extraction
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def load_cnn_model(model_path, device, input_size=64):
+    model = CNNModel(input_size=input_size).to(device)
     checkpoint = torch.load(model_path, map_location=device)
-    
-    # Handle both new and old save formats
-    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        # New format with metadata
-        input_size = checkpoint.get('input_size', input_size)
-        model = CNNModel(input_size=input_size).to(device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-    else:
-        # Old format or direct state dict
-        model = CNNModel(input_size=input_size).to(device)
-        try:
-            model.load_state_dict(checkpoint)
-        except:
-            print("Warning: Direct load failed, attempting to modify checkpoint...")
-            # Adjust the checkpoint to match the current model's structure
-            for key in list(checkpoint.keys()):
-                if key not in model.state_dict() or checkpoint[key].shape != model.state_dict()[key].shape:
-                    print(f"Removing mismatched layer: {key}")
-                    del checkpoint[key]
-            model.load_state_dict(checkpoint, strict=False)
-    
+
+    # Adjust the checkpoint to match the current model's structure
+    checkpoint_state_dict = checkpoint
+    model_state_dict = model.state_dict()
+
+    for key in checkpoint_state_dict.keys():
+        if key in model_state_dict and checkpoint_state_dict[key].shape != model_state_dict[key].shape:
+            print(f"Resizing layer: {key} from {checkpoint_state_dict[key].shape} to {model_state_dict[key].shape}")
+            if "weight" in key:
+                checkpoint_state_dict[key] = torch.nn.functional.interpolate(
+                    checkpoint_state_dict[key].unsqueeze(0).unsqueeze(0),
+                    size=model_state_dict[key].shape,
+                    mode="nearest"
+                ).squeeze(0).squeeze(0)
+            elif "bias" in key:
+                checkpoint_state_dict[key] = torch.zeros_like(model_state_dict[key])
+
+    # Load the adjusted checkpoint
+    model.load_state_dict(checkpoint_state_dict, strict=False)
     model.eval()
     return model
 
@@ -91,12 +90,14 @@ def apply_affine_transformation(block, transformation):
     return transformed_block
 
 def extract_features(block, cnn_model, device):
-    # Reshape and normalize block
     block_tensor = torch.tensor(block, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
+    start_time = time.time()
     with torch.no_grad():
-        features, _ = cnn_model(block_tensor)  # Get features from the encoder part
-        features = features.view(features.size(0), -1)  # Flatten the features
-        return features.squeeze().cpu().numpy()
+        features, _ = cnn_model(block_tensor)  # Unpack the tuple
+        features = features.squeeze().cpu().numpy()
+    end_time = time.time()
+    inference_time = round((end_time - start_time) * 1000, 4)
+    return features, inference_time
 
 def extract_features_batch(blocks, cnn_model, device, batch_size=64):
     n_blocks = len(blocks)
@@ -106,7 +107,8 @@ def extract_features_batch(blocks, cnn_model, device, batch_size=64):
         batch = blocks[i:i + batch_size]
         batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in batch]).to(device)
         with torch.no_grad():
-            batch_features, _ = cnn_model(batch_tensor)  # Get features from the encoder part
+            # Unpack the tuple returned by cnn_model
+            batch_features, _ = cnn_model(batch_tensor)  
             batch_features = batch_features.view(batch_features.size(0), -1)  # Flatten the features
             features.append(batch_features.cpu().numpy())
     
@@ -165,42 +167,53 @@ def find_nearest_in_kdtree(node, target, best=None, best_dist=float('inf'), dept
     
     return best, best_dist
 
-def encode_image_with_kdtree_manual(image, block_size=8, cnn_model=None, device=None):
+def encode_image_with_kdtree(image, block_size=8, cnn_model=None, device=None):
+    # Use larger batch size and single feature extraction
+    batch_size = 256  # Increased from 64 to 256
     range_blocks = partition_image(image, block_size)
-    domain_blocks = range_blocks  # Use same blocks for range and domain to reduce computation
+    domain_blocks = range_blocks
 
-    # Convert blocks to batch tensor for faster processing
-    batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in domain_blocks]).to(device)
+    # Extract features in one go with larger batch
+    start_time = time.time()
+    batches = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in domain_blocks])
+    features_list = []
     
-    # Extract features for all blocks in one batch
     with torch.no_grad():
-        all_features, _ = cnn_model(batch_tensor)
-        all_features = all_features.cpu().numpy()
+        for i in range(0, len(batches), batch_size):
+            batch = batches[i:i + batch_size].to(device)
+            features, _ = cnn_model(batch)
+            features_list.append(features.cpu().numpy())
+            del features
+            torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
-    # Split features into domain and range (they're the same in this case)
-    domain_features = all_features
-    range_features = all_features
-
-    # Build KD-tree using domain features
-    print("Building KD-tree...")
+    all_features = np.vstack(features_list)
+    inference_time = round((time.time() - start_time) * 1000, 4)
+    
+    # Quick KD-tree build
+    start_time = time.time()
     domain_indices = np.arange(len(domain_blocks))
-    kd_tree = build_kdtree(domain_features, domain_indices)
+    kd_tree = build_kdtree(all_features, domain_indices)
+    buildingTree_time = round((time.time() - start_time) * 1000, 4)
 
+    # Fast nearest neighbor search
     encoded_data = []
+    total_search_time = 0
     transformation = (1.0, 0.0, 1, 1)
-
-    print("Finding best matches using KD-tree...")
-    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="red") as pbar:
-        for idx, feature in enumerate(range_features):
-            # Find best match using KD-tree
+    
+    start_encoding = time.time()
+    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green", ncols=80) as pbar:
+        # Use numpy operations for faster search
+        for feature in all_features:
+            search_start = time.time()
             best_node, _ = find_nearest_in_kdtree(kd_tree, feature)
-            best_index = best_node.index
-            
-            # Store mapping without applying transformation yet
-            encoded_data.append((best_index, transformation))
+            total_search_time += time.time() - search_start
+            encoded_data.append((best_node.index, transformation))
             pbar.update(1)
 
-    return encoded_data, domain_blocks
+    nearestSearch_time = round((total_search_time / len(range_blocks)) * 1000, 4)
+    bps = round(len(range_blocks) / (time.time() - start_encoding), 4)
+
+    return encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time
 
 # Decode the image
 def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_file=None, output_path='data/compressed/fractal'):
@@ -228,96 +241,51 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     imsave(output_file, reconstructed_image)
 
-def process_image_batch(images, image_files, original_path, output_path, block_size, cnn_model, device):
-    """Process all images in two phases"""
-    all_kd_data = []  # Store KD-trees and features for all images
-    
-    # Phase 1: Build KD-trees for all images
-    print("\nPhase 1: Building KD-trees for all images...")
-    for idx, (image, image_file) in enumerate(zip(images, image_files), 1):
-        print(f"\nProcessing KD-tree for image {idx}/{len(images)}: {image_file}")
-        
-        # Partition and get features
-        blocks = partition_image(image, block_size)
-        batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in blocks]).to(device)
-        
-        with torch.no_grad():
-            features, _ = cnn_model(batch_tensor)
-            features = features.cpu().numpy()
-        
-        # Build KD-tree
-        domain_indices = np.arange(len(blocks))
-        kd_tree = build_kdtree(features, domain_indices)
-        
-        # Store data for phase 2
-        all_kd_data.append({
-            'kd_tree': kd_tree,
-            'features': features,
-            'blocks': blocks,
-            'image': image,
-            'file': image_file
-        })
-    
-    # Phase 2: Process transformations for all images
-    print("\nPhase 2: Processing transformations for all images...")
-    transformation = (1.0, 0.0, 1, 1)
-    
-    for idx, data in enumerate(all_kd_data, 1):
-        print(f"\nProcessing transformations for image {idx}/{len(images)}: {data['file']}")
-        
-        # Start encoding time measurement
-        start_time = time.time()
-        
-        # Encode using pre-built KD-tree
-        encoded_data = []
-        with tqdm(total=len(data['features']), desc="Encoding Image", unit="block", colour="red") as pbar:
-            for feature in data['features']:
-                best_node, _ = find_nearest_in_kdtree(data['kd_tree'], feature)
-                encoded_data.append((best_node.index, transformation))
-                pbar.update(1)
-        
-        encoding_time = round(time.time() - start_time, 4)
-        
-        # Save compressed image
-        compressed_file = f"compressed_{os.path.splitext(data['file'])[0]}.jpg"
-        output_file = os.path.join(output_path, compressed_file)
-        
-        # Start decoding time measurement
-        start_time = time.time()
-        decode_image(encoded_data, data['blocks'], data['image'].shape, 
-                    block_size, output_file=output_file, output_path=output_path)
-        decoding_time = round(time.time() - start_time, 4)
-        
-        # Save metrics with rounded times
-        image_path = os.path.join(original_path, data['file'])
-        save_csv(data['image'], image_path, output_file, data['file'], 
-                compressed_file, encoding_time, decoding_time)
 
+# Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
-    cnn_model_path = "data/features/cnn_model.pth"
-    cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)
+    cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
+    cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
 
-    image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])[:limit]
+    image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     print(f"Compressing {limit} image/s in '{original_path}' using enhanced fractal compression...")
-    
-    # Load all images first
-    images = []
-    valid_files = []
+
+    os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
+
+    processed_count = 0  # Count of newly compressed images
     for image_file in image_files:
-        try:
-            image_path = os.path.join(original_path, image_file)
-            image = load_image(image_path)
-            images.append(image)
-            valid_files.append(image_file)
-        except ValueError as e:
-            print(f"Error loading {image_file}: {e}")
+        if processed_count >= limit:
+            break  # Stop when we have compressed 'limit' new images
+
+        compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        output_file = os.path.join(output_path, compressed_file)
+
+        # Skip if already compressed
+        if os.path.exists(output_file):
+            print(f"[SKIPPED] {image_file} already compressed.")
             continue
-    
-    # Process all images in batch
-    process_image_batch(images, valid_files, original_path, output_path, block_size, cnn_model, device)
-    
-    print(f"***Finished compressing {len(valid_files)} image/s***")
+
+        print(f"[Processing {processed_count+1}/{limit}] {image_file}...")
+        image_path = os.path.join(original_path, image_file)
+        image = load_image(image_path)
+
+        start_time = time.time()
+        encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_kdtree(image, block_size, cnn_model, device)
+        end_time = time.time()
+        encodingTime = round((end_time - start_time), 4)
+
+        start_time = time.time()
+        decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
+        end_time = time.time()
+        decodingTime = round((end_time - start_time), 4)
+
+        compression_hybrid_csv(image, image_path, output_file, image_file, compressed_file, 
+                        buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "compressed_enhanced_CSV.csv")
+        processed_count += 1
+
+    print(f"***Finished compressing {limit} image/s***")
     sys.exit(1)
+
 
 def modify_checkpoint(model_path, new_model):
     checkpoint = torch.load(model_path, map_location="cpu")
