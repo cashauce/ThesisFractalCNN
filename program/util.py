@@ -67,43 +67,53 @@ def cnn_metrics_csv(epoch, batch, trainingLoss, trainingTime, csvFile_name):
         writer.writerow(data)
 
 
-def compression_traditional_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime, bps,  csvFile_name):
+def compression_traditional_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime, bps, csvFile_name):
     os.makedirs("data/csv", exist_ok=True)
     csv_filename = os.path.join("data/csv", csvFile_name)
 
-    # Check if the image already exists in the CSV file
-    if os.path.isfile(csv_filename):
-        with open(csv_filename, mode="r", newline="") as file:
-            reader = csv.reader(file)
-            existing_images = {row[0] for row in reader}  # Collect existing original image names
-
-        if original_image in existing_images:
-            print(f"Skipping {original_image}, already recorded.")
-            return  # Skip saving if the image is already recorded
-
-    # evaluate metrics
+    # Evaluate metrics
     original_size, compressed_size, cr, psnr, ssim = evaluate_compression(image, original_image_path, compressed_image_path)
 
-    # prepare data for CSV
-    data = [original_image, original_size, original_image_path, 
-            compressed_image, compressed_size, compressed_image_path, 
-            cr, encodingTime, decodingTime, psnr, ssim, bps]
+    # Prepare new data for update
+    new_data = [original_image, original_size, original_image_path, 
+                compressed_image, compressed_size, compressed_image_path, 
+                cr, encodingTime, decodingTime, psnr, ssim, bps]
 
-    # Write to CSV
+    # Read the existing CSV file
+    rows = []
+    header = []
     file_exists = os.path.isfile(csv_filename)
-    with open(csv_filename, mode="a", newline="") as file:
+
+    if file_exists:
+        with open(csv_filename, mode="r", newline="") as file:
+            reader = csv.reader(file)
+            rows = list(reader)
+        
+        header = rows[0]  # Store the header
+        rows = rows[1:]   # Remove header from rows for easier processing
+
+        # Find the row to update
+        updated = False
+        for i, row in enumerate(rows):
+            if row[0] == original_image:  # Match original image name
+                rows[i] = new_data  # Update the row with new data
+                updated = True
+                break
+
+        if not updated:
+            rows.append(new_data)  # Append if not found
+    else:
+        rows.append(new_data)  # If file doesn't exist, create new data list
+
+    # Write the updated rows back to the CSV file
+    with open(csv_filename, mode="w", newline="") as file:
         writer = csv.writer(file)
+        writer.writerow(["Original Image", "Original Image Size (KB)", "Original Image Path",
+                         "Compressed Image", "Compressed Image Size (KB)", "Compressed Image Path", 
+                         "Compression Ratio", "Encoding Time (s)", "Decoding Time (s)", "PSNR (dB)", "SSIM", "Blocks (blocks/s)"])  # Write header
+        writer.writerows(rows)  # Write updated data
 
-        # Write the header only if the file does not exist
-        if not file_exists:
-            writer.writerow(["Original Image", "Original Image Size (KB)", "Original Image Path",
-                             "Compressed Image", "Compressed Image Size (KB)", "Compressed Image Path", 
-                             "Compression Ratio", "Encoding Time (s)", "Decoding Time (s)", "PSNR (dB)", "SSIM", "Blocks (blocks/s)"])
-
-        # Write the data row
-        writer.writerow(data)
-
-    print(f"Metrics saved to {csv_filename}")
+    print(f"Metrics updated/saved in {csv_filename}")
 
 
 def compression_hybrid_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, 
