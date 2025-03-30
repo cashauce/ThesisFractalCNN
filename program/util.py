@@ -20,7 +20,6 @@ def getTime(total_time):
         return f"{int(hours)} hours, {int(minutes)} minutes, and {seconds:.4f} seconds"
     
 
-# pang evaluate lang to para makita yung mga metrics. hindi to yung final na gagamitin
 def evaluate_compression(image, original_image_path, compressed_image_path):
     original_image = image
     compressed_image = io.imread(compressed_image_path, as_gray=True) / 255.0
@@ -52,9 +51,26 @@ def evaluate_compression(image, original_image_path, compressed_image_path):
     return original_size, compressed_size, CR_ratio, PSNR, SSIM
 
 
+def cnn_metrics_csv(trainingTime, epoch, batch, lossCount, csvFile_name):
+    os.makedirs("data/csv", exist_ok=True)
+    csv_filename = os.path.join("data/csv", csvFile_name)
+    data = [trainingTime, epoch, batch, lossCount]
+    file_exists = os.path.isfile(csv_filename)
+    with open(csv_filename, mode="a", newline="") as file:
+        writer = csv.writer(file)
+
+        # Write the header only if the file does not exist
+        if not file_exists:
+            writer.writerow(["Training Time (s)", "Epoch", "Batch", "Training Loss"])
+
+        # Write the data row
+        writer.writerow(data)
+
+    print(f"Metrics saved to {csv_filename}")
+
+
 def compression_traditional_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime, bps,  csvFile_name):
     os.makedirs("data/csv", exist_ok=True)
-
     csv_filename = os.path.join("data/csv", csvFile_name)
 
     # Check if the image already exists in the CSV file
@@ -82,7 +98,7 @@ def compression_traditional_csv(image, original_image_path, compressed_image_pat
 
         # Write the header only if the file does not exist
         if not file_exists:
-            writer.writerow(["Original Image", "Original Image Size (KB)", "original Image Path",
+            writer.writerow(["Original Image", "Original Image Size (KB)", "Original Image Path",
                              "Compressed Image", "Compressed Image Size (KB)", "Compressed Image Path", 
                              "Compression Ratio", "Encoding Time (s)", "Decoding Time (s)", "PSNR (dB)", "SSIM", "Blocks (blocks/s)"])
 
@@ -124,7 +140,7 @@ def compression_hybrid_csv(image, original_image_path, compressed_image_path, or
 
         # Write the header only if the file does not exist
         if not file_exists:
-            writer.writerow(["Original Image", "Original Image Size (KB)", "original Image Path",
+            writer.writerow(["Original Image", "Original Image Size (KB)", "Original Image Path",
                              "Compressed Image", "Compressed Image Size (KB)", "Compressed Image Path", "Compression Ratio", 
                              "Build Tree Time (ms)", "Nearest Search Time (ms)", "CNN Inference Time (ms)", "Encoding Time (s)", "Decoding Time (s)", 
                              "PSNR (dB)", "SSIM", "Blocks (blocks/s)"])
