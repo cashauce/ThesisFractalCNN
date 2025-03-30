@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, random_split
 from PIL import Image
 import time
-from program.util import getTime
+from program.util import getTime, cnn_metrics_csv
 from torchvision import transforms
 
 # LOAD MRI IMAGES
@@ -173,6 +173,7 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
         print("-" * 30)
 
         for batch_idx, images in enumerate(train_loader):
+            start_time = time.time()
             images = images.to(device)
 
             # Forward pass
@@ -193,6 +194,10 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
             # Print batch progress
             if (batch_idx + 1) % 5 == 0:
                 print(f"Batch [{batch_idx + 1}/{len(train_loader)}] - Loss: {loss.item():.6f}")
+            
+            end_time = time.time()
+            trainingTime = round((end_time - start_time), 4)
+            cnn_metrics_csv(epoch+1, batch_count, loss.item(), trainingTime, "trained_cnn_CSV.csv")
 
         avg_epoch_loss = epoch_loss / batch_count
         train_losses.append(avg_epoch_loss)

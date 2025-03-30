@@ -51,22 +51,20 @@ def evaluate_compression(image, original_image_path, compressed_image_path):
     return original_size, compressed_size, CR_ratio, PSNR, SSIM
 
 
-def cnn_metrics_csv(trainingTime, epoch, batch, lossCount, csvFile_name):
+def cnn_metrics_csv(epoch, batch, trainingLoss, trainingTime, csvFile_name):
     os.makedirs("data/csv", exist_ok=True)
     csv_filename = os.path.join("data/csv", csvFile_name)
-    data = [trainingTime, epoch, batch, lossCount]
+    data = [epoch, batch, trainingLoss, trainingTime]
     file_exists = os.path.isfile(csv_filename)
     with open(csv_filename, mode="a", newline="") as file:
         writer = csv.writer(file)
 
         # Write the header only if the file does not exist
         if not file_exists:
-            writer.writerow(["Training Time (s)", "Epoch", "Batch", "Training Loss"])
+            writer.writerow(["Epoch", "Batch", "Training Loss", "Training Time (s)"])
 
         # Write the data row
         writer.writerow(data)
-
-    print(f"Metrics saved to {csv_filename}")
 
 
 def compression_traditional_csv(image, original_image_path, compressed_image_path, original_image, compressed_image, encodingTime, decodingTime, bps,  csvFile_name):

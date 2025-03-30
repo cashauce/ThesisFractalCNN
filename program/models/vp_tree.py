@@ -89,30 +89,6 @@ def apply_affine_transformation(block, transformation):
     transformed_block = block[y_transformed, x_transformed]
     return transformed_block
 
-def extract_features(block, cnn_model, device):
-    block_tensor = torch.tensor(block, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
-    start_time = time.time()
-    with torch.no_grad():
-        features = cnn_model(block_tensor).squeeze().cpu().numpy()
-    end_time = time.time()
-    inference_time = round((end_time - start_time) * 1000, 4)
-
-    return features, inference_time
-
-def extract_features_batch(blocks, cnn_model, device, batch_size=64):
-    n_blocks = len(blocks)
-    features = []
-    
-    # Convert blocks to tensor in batches
-    for i in range(0, n_blocks, batch_size):
-        batch = blocks[i:i + batch_size]
-        batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in batch]).to(device)
-        with torch.no_grad():
-            batch_features = cnn_model(batch_tensor).cpu().numpy()
-        features.append(batch_features)
-    
-    return np.vstack(features)
-
 class VPNode:
     def __init__(self, point, index, threshold=None, left=None, right=None):
         self.point = point  # Feature vector
@@ -176,40 +152,37 @@ def encode_image_with_vptree(image, block_size=8, cnn_model=None, device=None):
     range_blocks = partition_image(image, block_size)
     domain_blocks = partition_image(image, block_size)
 
-    # Extract CNN features in batches for better performance
-    domain_features = extract_features_batch(domain_blocks, cnn_model, device)
-    
-    # Build VP-tree using domain features
-    domain_indices = np.arange(len(domain_blocks))
+    # Extract all features at once in a single batch
     start_time = time.time()
-    vp_tree = build_vptree(domain_features, domain_indices)
-    end_time = time.time()
-    buildingTree_time = round((end_time - start_time) * 1000, 4)
+    batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in domain_blocks]).to(device)
+    with torch.no_grad():
+        all_features, _ = cnn_model(batch_tensor)
+        all_features = all_features.view(all_features.size(0), -1).cpu().numpy()
+    inference_time = round((time.time() - start_time) * 1000, 4)
 
-    encoded_data = []
-    transformation = (1.0, 0.0, 1, 1)
+    # Build KD-tree using domain features
     start_time = time.time()
-    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="blue") as pbar:
-        for idx, block in enumerate(range_blocks):
-            # Extract features for current block
-            feature, inference_time = extract_features(block, cnn_model, device)
-            
-            # Find best match using VP-tree
-            start_time = time.time()
+    domain_indices = np.arange(len(domain_blocks))
+    vp_tree = build_vptree(all_features, domain_indices)
+    buildingTree_time = round((time.time() - start_time) * 1000, 4)
+
+    # Search for nearest neighbors
+    encoded_data = []
+    transformation = (1.0, 0.0, 1, 1)  # Fixed transformation
+    total_search_time = 0
+
+    start_encoding = time.time()
+    with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
+        for feature in all_features:  # Use pre-computed features
+            search_start = time.time()
             best_node, _ = find_nearest_in_vptree(vp_tree, feature)
-            best_index = best_node.index
-            end_time = time.time()
-            nearestSearch_time = round((end_time - start_time) * 1000, 4)
+            total_search_time += time.time() - search_start
             
-            # Apply transformation
-            transformed_block = apply_affine_transformation(domain_blocks[best_index], transformation)
-            encoded_data.append((best_index, transformation))
+            encoded_data.append((best_node.index, transformation))
             pbar.update(1)
 
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    bps = len(range_blocks) / elapsed_time if elapsed_time > 0 else 0
-    bps = round((bps), 4)
+    nearestSearch_time = round((total_search_time / len(range_blocks)) * 1000, 4)
+    bps = round(len(range_blocks) / (time.time() - start_encoding), 4)
 
     return encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time
 

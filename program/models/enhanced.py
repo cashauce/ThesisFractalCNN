@@ -89,31 +89,6 @@ def apply_affine_transformation(block, transformation):
     transformed_block = block[y_transformed, x_transformed]
     return transformed_block
 
-def extract_features(block, cnn_model, device):
-    block_tensor = torch.tensor(block, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
-    start_time = time.time()
-    with torch.no_grad():
-        features, _ = cnn_model(block_tensor)  # Unpack the tuple
-        features = features.squeeze().cpu().numpy()
-    end_time = time.time()
-    inference_time = round((end_time - start_time) * 1000, 4)
-    return features, inference_time
-
-def extract_features_batch(blocks, cnn_model, device, batch_size=64):
-    n_blocks = len(blocks)
-    features = []
-    
-    for i in range(0, n_blocks, batch_size):
-        batch = blocks[i:i + batch_size]
-        batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in batch]).to(device)
-        with torch.no_grad():
-            # Unpack the tuple returned by cnn_model
-            batch_features, _ = cnn_model(batch_tensor)  
-            batch_features = batch_features.view(batch_features.size(0), -1)  # Flatten the features
-            features.append(batch_features.cpu().numpy())
-    
-    return np.vstack(features)
-
 class KDNode:
     def __init__(self, point, index, left=None, right=None):
         self.point = point  # the feature vector
