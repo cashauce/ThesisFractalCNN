@@ -59,62 +59,80 @@ class MRIDataset(Dataset):
 
 # DEFINE CNN MODEL
 class CNNModel(nn.Module):
-    def __init__(self, input_size=256):  # Changed default input size to match image size
+    def __init__(self, input_size=256):
         super(CNNModel, self).__init__()
-
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1)
-
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.dropout = nn.Dropout(0.25)
-
+        
+        # Optimized encoder architecture
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2)
+        )
+        
         # Calculate the flattened size
         self.input_size = input_size
         self.flattened_size = self._calculate_flattened_size()
         
-        # Adjust fully connected layer
-        self.fc1 = nn.Linear(self.flattened_size, 128)
-        self.fc_dropout = nn.Dropout(0.5)
-
-        # Add decoder layers for reconstruction
-        self.decoder_fc = nn.Linear(128, self.flattened_size)
-        self.deconv1 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.deconv2 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.deconv3 = nn.ConvTranspose2d(32, 1, kernel_size=3, stride=2, padding=1, output_padding=1)
+        # Feature extraction layers
+        self.feature_layers = nn.Sequential(
+            nn.Linear(self.flattened_size, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(512, 128),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Decoder layers with skip connections
+        self.decoder = nn.Sequential(
+            nn.Linear(128, self.flattened_size),
+            nn.ReLU(inplace=True)
+        )
+        
+        self.decoder_conv = nn.Sequential(
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            
+            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
+            nn.Tanh()
+        )
 
     def _calculate_flattened_size(self):
-        dummy_input = torch.zeros(1, 1, self.input_size, self.input_size)
-        x = self.pool(F.relu(self.conv1(dummy_input)))  # 128x128
-        x = self.pool(F.relu(self.conv2(x)))           # 64x64
-        x = self.pool(F.relu(self.conv3(x)))          # 32x32
+        x = torch.zeros(1, 1, self.input_size, self.input_size)
+        x = self.encoder(x)
         return x.numel()
 
     def forward(self, x):
         # Encoder
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.dropout(x)
+        encoded = self.encoder(x)
         
-        x = self.pool(F.relu(self.conv2(x)))
-        x = self.dropout(x)
+        # Flatten
+        flattened = encoded.view(encoded.size(0), -1)
         
-        x = self.pool(F.relu(self.conv3(x)))
-        x = self.dropout(x)
+        # Extract features
+        features = self.feature_layers(flattened)
         
-        x = x.view(x.size(0), -1)  # Flatten
+        # Decode for reconstruction
+        decoded = self.decoder(features)
+        decoded = decoded.view(-1, 128, self.input_size//8, self.input_size//8)
+        reconstructed = self.decoder_conv(decoded)
         
-        # Get features
-        features = F.relu(self.fc1(x))
-        features = self.fc_dropout(features)
-        
-        # Decoder for reconstruction
-        x = F.relu(self.decoder_fc(features))
-        x = x.view(-1, 128, 32, 32)  # Reshape to match encoder output
-        x = F.relu(self.deconv1(x))
-        x = F.relu(self.deconv2(x))
-        x = torch.tanh(self.deconv3(x))  # Use tanh for normalized output
-        
-        return features, x
+        return features, reconstructed
 
 
 # TRAINING FUNCTION
@@ -144,18 +162,20 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     model = CNNModel().to(device)
-    criterion = nn.MSELoss()
-    # Reduce initial learning rate
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
     
-    # Add learning rate scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, 
-        mode='min', 
-        factor=0.5, 
-        patience=2, 
-        verbose=True
+    # Use a more appropriate optimizer and learning rate
+    optimizer = optim.AdamW(model.parameters(), lr=0.0002, weight_decay=0.01)
+    
+    # Use CosineAnnealingLR instead of ReduceLROnPlateau
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=num_epochs,
+        eta_min=1e-6
     )
+    
+    # Use a combination of MSE and L1 loss for better reconstruction
+    mse_criterion = nn.MSELoss()
+    l1_criterion = nn.L1Loss()
 
     train_losses = []
     val_losses = []
@@ -178,13 +198,15 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
 
             # Forward pass
             features, reconstructed = model(images)
-            # Reduce loss scaling from 100 to 10
-            loss = criterion(reconstructed, images) * 10
+            
+            # Calculate combined loss
+            mse_loss = mse_criterion(reconstructed, images)
+            l1_loss = l1_criterion(reconstructed, images)
+            loss = (0.8 * mse_loss + 0.2 * l1_loss) * 5
 
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
-            # Reduce clip value from 1.0 to 0.5
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
             optimizer.step()
 
@@ -210,14 +232,14 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
             for images in test_loader:
                 images = images.to(device)
                 features, reconstructed = model(images)
-                val_loss += criterion(reconstructed, images).item()
+                val_loss += mse_criterion(reconstructed, images).item()
                 val_batch_count += 1
 
         avg_val_loss = val_loss / val_batch_count
         val_losses.append(avg_val_loss)
 
-        # Update learning rate based on validation loss
-        scheduler.step(avg_val_loss)
+        # Update scheduler at epoch end instead of based on validation loss
+        scheduler.step()
 
         print("\nEpoch Summary:")
         print(f"Training Loss: {avg_epoch_loss:.6f}")
