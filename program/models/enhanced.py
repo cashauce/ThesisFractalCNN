@@ -15,6 +15,7 @@ from skimage.color import rgb2gray
 from program.CNN_model import CNNModel  # Import the custom CNNModel class
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
+import gdown
 
 # Load pre-trained MobileNetV2 model for feature extraction
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -209,11 +210,15 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
 
 # Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
+    # https://drive.google.com/file/d/1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW/view?usp=drive_link
+    file_id = "1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW"
     cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
+    print(f"\n\nDownloading the CNN model with extracted features...")
+    gdown.download(f"https://drive.google.com/uc?id={file_id}", cnn_model_path, quiet=False)
     cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
 
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    print(f"Compressing {limit} image/s in '{original_path}' using enhanced fractal compression...")
+    print(f"\n\nCompressing {limit} image/s in '{original_path}' using enhanced fractal compression...")
 
     os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
 
@@ -247,6 +252,10 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
         compression_hybrid_csv(image, image_path, output_file, image_file, compressed_file, 
                         buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "compressed_enhanced_CSV.csv")
         processed_count += 1
+
+    # Delete the cnn file after processing
+    if os.path.exists(cnn_model_path):
+        os.remove(cnn_model_path)
 
     print(f"***Finished compressing {limit} image/s***")
     sys.exit(1)
