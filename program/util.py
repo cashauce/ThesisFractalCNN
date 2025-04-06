@@ -157,3 +157,39 @@ def compression_hybrid_csv(image, original_image_path, compressed_image_path, or
         writer.writerow(data)
 
     print(f"Metrics saved to {csv_filename}")
+
+
+
+
+def multiRun_csv(method, test_run, image, original_image_path, compressed_image_path, original_image, compressed_image, 
+                 buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps,  csvFile_name):
+    os.makedirs("data/csv", exist_ok=True)
+
+    csv_filename = os.path.join("data/csv", csvFile_name)
+
+    # evaluate metrics
+    original_size, compressed_size, cr, psnr, ssim = evaluate_compression(image, original_image_path, compressed_image_path)
+
+    # prepare data for CSV
+    data = [method, test_run, 
+            original_image, original_size, original_image_path, 
+            compressed_image, compressed_size, compressed_image_path, cr, 
+            buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, 
+            psnr, ssim, bps]
+
+    # Write to CSV
+    file_exists = os.path.isfile(csv_filename)
+    with open(csv_filename, mode="a", newline="") as file:
+        writer = csv.writer(file)
+
+        # Write the header only if the file does not exist
+        if not file_exists:
+            writer.writerow(["Method", "Test Runs", "Original Image", "Original Image Size (KB)", "Original Image Path",
+                             "Compressed Image", "Compressed Image Size (KB)", "Compressed Image Path", "Compression Ratio", 
+                             "Build Tree Time (ms)", "Nearest Search Time (ms)", "CNN Inference Time (ms)", "Encoding Time (s)", "Decoding Time (s)", 
+                             "PSNR (dB)", "SSIM", "Blocks (blocks/s)"])
+
+        # Write the data row
+        writer.writerow(data)
+
+    print(f"Metrics saved to {csv_filename}")

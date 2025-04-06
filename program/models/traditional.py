@@ -6,7 +6,7 @@ from skimage import io, transform, img_as_ubyte
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
 from skimage.io import imsave
-from program.util import compression_traditional_csv
+from program.util import multiRun_csv
 from tqdm import tqdm
 import zlib
 from concurrent.futures import ProcessPoolExecutor
@@ -90,12 +90,12 @@ def encode_image(image, block_size=8):
 
     encoded_data = []
 
-    start_time = time.time()
+    start_time = time.perf_counter()
     with ProcessPoolExecutor() as executor:
         results = list(tqdm(executor.map(encode_block, [(block, domain_blocks) for block in range_blocks]), 
                             total=len(range_blocks), desc="Encoding Image", unit="block", colour="red"))
         
-    end_time = time.time()
+    end_time = time.perf_counter()
     elapsed_time = end_time - start_time
     bps = len(range_blocks) / elapsed_time if elapsed_time > 0 else 0
     bps = round((bps), 4)
@@ -104,7 +104,7 @@ def encode_image(image, block_size=8):
         compressed_transformation = affine_transformation(transformation)
         encoded_data.append((best_block, compressed_transformation))
 
-    return encoded_data, bps
+    return encoded_data, elapsed_time, bps
 
 
 # decode the image
@@ -131,7 +131,7 @@ def decode_image(encoded_data, image_shape, block_size=8, output_file=None, outp
     imsave(output_file, reconstructed_image)
 
 
-# Function to compress and evaluate images in a folder
+"""# Function to compress and evaluate images in a folder
 def run_traditional_compression(original_path, output_path, limit, block_size=8):
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     print(f"Compressing {limit} image(s) in '{original_path}' using fractal compression...")
@@ -166,4 +166,67 @@ def run_traditional_compression(original_path, output_path, limit, block_size=8)
         compression_traditional_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, "compressed_traditional_CSV.csv")
         processed_count += 1
 
-    print(f"***Finished compressing {processed_count} new image(s).***")
+    print(f"***Finished compressing {processed_count} new image(s).***")"""
+
+
+
+
+
+
+# multi testing function
+def run_traditional_compression(original_path, output_path, limit, block_size=8):
+    glioma_original_path = "data/dataset/glioma"
+    pituitary_original_path = "data/dataset/pituitary"
+    output_path = "data/compressed/multiTest"
+    print(f"Compressing all glioma and pituitary images using kd-tree only fractal compression...")
+
+    glioma = [
+        "glioma_0132.jpg", "glioma_0990.jpg", "glioma_0322.jpg", "glioma_0296.jpg", "glioma_0102.jpg",
+        "glioma_0840.jpg", "glioma_0557.jpg", "glioma_0386.jpg", "glioma_0769.jpg", "glioma_0159.jpg",
+        "glioma_0934.jpg", "glioma_0171.jpg", "glioma_0111.jpg", "glioma_0918.jpg", "glioma_0558.jpg"
+    ]
+
+    pituitary = [
+        "pituitary_0048.jpg", "pituitary_0681.jpg", "pituitary_0287.jpg", "pituitary_0798.jpg", "pituitary_0598.jpg",
+        "pituitary_0274.jpg", "pituitary_0873.jpg", "pituitary_0971.jpg", "pituitary_0816.jpg", "pituitary_0217.jpg",
+        "pituitary_0106.jpg", "pituitary_0249.jpg", "pituitary_0498.jpg", "pituitary_0218.jpg", "pituitary_0499.jpg"
+    ]
+
+    selected_images = glioma + pituitary
+    method = "traditional"
+    total_runs = 5
+
+    for testRuns in range(1, total_runs + 1):
+        print(f"\n>>> Starting run {testRuns} of {total_runs}...\n")
+
+        for idx, image_file in enumerate(selected_images, start=1):
+            if "glioma" in image_file:
+                image_path = os.path.join(glioma_original_path, image_file)
+            else:
+                image_path = os.path.join(pituitary_original_path, image_file)
+
+            compressed_file = f"{method}_{testRuns}_compressed_{os.path.splitext(image_file)[0]}.jpg"
+            output_file = os.path.join(output_path, compressed_file)
+            print(f"[Run {testRuns}] [Image {idx}/{len(selected_images)}] Processing {image_file}...")
+
+            image = load_image(image_path)
+
+            start_time = time.perf_counter()
+            encoded_data, nearestSearch_time, bps = encode_image(image, block_size)
+            end_time = time.perf_counter()
+            encodingTime = round((end_time - start_time), 4)
+
+            start_time = time.perf_counter()
+            decode_image(encoded_data, image.shape, block_size, output_file=output_file, output_path=output_path)
+            end_time = time.perf_counter()
+            decodingTime = round((end_time - start_time), 4)
+
+            multiRun_csv(
+                method, testRuns, 
+                image, image_path, output_file, image_file, compressed_file,
+                0, nearestSearch_time, 0, encodingTime, decodingTime, 0, "multiTest_CSV.csv"
+            )
+
+    print(f"\n*** Finished all {total_runs} runs for {len(selected_images)} images ***")
+    sys.exit(1)
+

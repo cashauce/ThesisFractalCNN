@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 import time
-from program.util import compression_hybrid_csv
+from program.util import multiRun_csv
 from skimage import io, img_as_ubyte, transform
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
@@ -148,36 +148,36 @@ def encode_image_with_kdtree(image, block_size=8, cnn_model=None, device=None):
     domain_blocks = range_blocks  # Use same blocks for both to reduce computation
 
     # Extract all features at once in a single batch
-    start_time = time.time()
+    start_time = time.perf_counter()
     batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in domain_blocks]).to(device)
     with torch.no_grad():
         all_features, _ = cnn_model(batch_tensor)
         all_features = all_features.view(all_features.size(0), -1).cpu().numpy()
-    inference_time = round((time.time() - start_time) * 1000, 4)
+    inference_time = round((time.perf_counter() - start_time) * 1000, 4)
 
     # Build KD-tree using domain features
-    start_time = time.time()
+    start_time = time.perf_counter()
     domain_indices = np.arange(len(domain_blocks))
     kd_tree = build_kdtree(all_features, domain_indices)
-    buildingTree_time = round((time.time() - start_time) * 1000, 4)
+    buildingTree_time = round((time.perf_counter() - start_time) * 1000, 4)
 
     # Search for nearest neighbors
     encoded_data = []
     transformation = (1.0, 0.0, 1, 1)  # Fixed transformation
     total_search_time = 0
     
-    start_encoding = time.time()
+    start_encoding = time.perf_counter()
     with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
         for feature in all_features:  # Use pre-computed features
-            search_start = time.time()
+            search_start = time.perf_counter()
             best_node, _ = find_nearest_in_kdtree(kd_tree, feature)
-            total_search_time += time.time() - search_start
+            total_search_time += time.perf_counter() - search_start
             
             encoded_data.append((best_node.index, transformation))
             pbar.update(1)
 
     nearestSearch_time = round((total_search_time / len(range_blocks)) * 1000, 4)
-    bps = round(len(range_blocks) / (time.time() - start_encoding), 4)
+    bps = round(len(range_blocks) / (time.perf_counter() - start_encoding), 4)
 
     return encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time
 
@@ -208,7 +208,7 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
     imsave(output_file, reconstructed_image)
 
 
-# Function to compress and evaluate images in a folder using fractal compression
+"""# Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
     # https://drive.google.com/file/d/1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW/view?usp=drive_link
     file_id = "1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW"
@@ -258,7 +258,7 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
         os.remove(cnn_model_path)
 
     print(f"***Finished compressing {limit} image/s***")
-    sys.exit(1)
+    sys.exit(1)"""
 
 
 def modify_checkpoint(model_path, new_model):
@@ -278,3 +278,75 @@ def modify_checkpoint(model_path, new_model):
 # Example usage
 # cnn_model = CNNModel().to(device)
 # cnn_model = modify_checkpoint("data/features/cnn_model.pth", cnn_model)
+
+
+
+
+
+
+
+# multi testing function
+# Function to compress and evaluate images in a folder using fractal compression
+def run_enhanced_compression(original_path, output_path, limit, block_size=8):
+    # https://drive.google.com/file/d/1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW/view?usp=drive_link
+    #file_id = "1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW"
+    cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
+    #print(f"\n\nDownloading the CNN model with extracted features...")
+    #gdown.download(f"https://drive.google.com/uc?id={file_id}", cnn_model_path, quiet=False)
+    cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
+
+    glioma_original_path = "data/dataset/glioma"
+    pituitary_original_path = "data/dataset/pituitary"
+    output_path = "data/compressed/multiTest"
+    print(f"Compressing all glioma and pituitary images using proposed fractal compression...")
+
+    glioma = [
+        "glioma_0132.jpg", "glioma_0990.jpg", "glioma_0322.jpg", "glioma_0296.jpg", "glioma_0102.jpg",
+        "glioma_0840.jpg", "glioma_0557.jpg", "glioma_0386.jpg", "glioma_0769.jpg", "glioma_0159.jpg",
+        "glioma_0934.jpg", "glioma_0171.jpg", "glioma_0111.jpg", "glioma_0918.jpg", "glioma_0558.jpg"
+    ]
+
+    pituitary = [
+        "pituitary_0048.jpg", "pituitary_0681.jpg", "pituitary_0287.jpg", "pituitary_0798.jpg", "pituitary_0598.jpg",
+        "pituitary_0274.jpg", "pituitary_0873.jpg", "pituitary_0971.jpg", "pituitary_0816.jpg", "pituitary_0217.jpg",
+        "pituitary_0106.jpg", "pituitary_0249.jpg", "pituitary_0498.jpg", "pituitary_0218.jpg", "pituitary_0499.jpg"
+    ]
+
+    selected_images = glioma + pituitary
+    method = "proposed"
+    total_runs = 5
+
+    for testRuns in range(1, total_runs + 1):
+        print(f"\n>>> Starting run {testRuns} of {total_runs}...\n")
+
+        for idx, image_file in enumerate(selected_images, start=1):
+            if "glioma" in image_file:
+                image_path = os.path.join(glioma_original_path, image_file)
+            else:
+                image_path = os.path.join(pituitary_original_path, image_file)
+
+            compressed_file = f"{method}_{testRuns}_compressed_{os.path.splitext(image_file)[0]}.jpg"
+            output_file = os.path.join(output_path, compressed_file)
+            print(f"[Run {testRuns}] [Image {idx}/{len(selected_images)}] Processing {image_file}...")
+
+            image = load_image(image_path)
+
+            start_time = time.time()
+            encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_kdtree(image, block_size, cnn_model, device)
+            end_time = time.time()
+            encodingTime = round((end_time - start_time), 4)
+
+            start_time = time.time()
+            decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
+            end_time = time.time()
+            decodingTime = round((end_time - start_time), 4)
+
+            multiRun_csv(
+                method, testRuns, 
+                image, image_path, output_file, image_file, compressed_file,
+                buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "multiTest_CSV.csv"
+            )
+
+    print(f"\n*** Finished all {total_runs} runs for {len(selected_images)} images ***")
+    sys.exit(1)
+
