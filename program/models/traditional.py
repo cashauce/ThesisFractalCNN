@@ -136,9 +136,10 @@ def decode_image(encoded_data, image_shape, block_size=8, output_file=None, outp
 
 # Function to compress and evaluate images in a folder
 def run_traditional_compression(original_path, output_path, limit, block_size=8):
+    output_path = "data/compressed/test"
     method = "traditional"
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    print(f"Compressing {limit} image(s) in '{original_path}' using fractal compression...")
+    print(f"Compressing {limit} image(s) in '{original_path}' using traditional fractal compression...")
 
     os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
 
@@ -149,13 +150,13 @@ def run_traditional_compression(original_path, output_path, limit, block_size=8)
         if processed_count >= limit:
             break  # Stop when we have compressed 'limit' new images
 
-        base_filename = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        base_filename = f"{method}_compressed_{os.path.splitext(image_file)[0]}.jpg"
         output_file = os.path.join(output_path, base_filename)
 
         # Check if the file already exists and generate a new filename with a number
         counter = 2
         while os.path.exists(output_file):
-            base_filename = f"compressed_{os.path.splitext(image_file)[0]}_{counter}.jpg"
+            base_filename = f"{method}_compressed_{os.path.splitext(image_file)[0]}_{counter}.jpg"
             output_file = os.path.join(output_path, base_filename)
             counter += 1
 

@@ -32,7 +32,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_path",
         type=str,
-        default="data/compressed/test",
+        default="data/compressed",
         help="Path to the compressed image folder"
     )
     parser.add_argument(

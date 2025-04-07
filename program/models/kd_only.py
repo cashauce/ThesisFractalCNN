@@ -195,6 +195,7 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
 
 # Function to compress and evaluate images in a folder using fractal compression
 def run_kd_only_compression(original_path, output_path, limit, block_size=8):
+    output_path = "data/compressed/test"
     method = "kd-tree-only"
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     print(f"\n\nCompressing {limit} image/s in '{original_path}' using kd-tree only compression...")
@@ -208,13 +209,13 @@ def run_kd_only_compression(original_path, output_path, limit, block_size=8):
         if processed_count >= limit:
             break  # Stop when we have compressed 'limit' new images
 
-        base_filename = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        base_filename = f"{method}_compressed_{os.path.splitext(image_file)[0]}.jpg"
         output_file = os.path.join(output_path, base_filename)
 
         # Check if the file already exists and generate a new filename with a number
         counter = 2
         while os.path.exists(output_file):
-            base_filename = f"compressed_{os.path.splitext(image_file)[0]}_{counter}.jpg"
+            base_filename = f"{method}_compressed_{os.path.splitext(image_file)[0]}_{counter}.jpg"
             output_file = os.path.join(output_path, base_filename)
             counter += 1
 
