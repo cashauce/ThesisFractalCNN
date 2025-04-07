@@ -2,12 +2,15 @@ import sys
 import os
 import numpy as np
 import time
-from program.util import multiRun_csv
+from program.util import multiRun_csv, evaluate_compression
 from skimage import io, img_as_ubyte, transform
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
 from skimage.io import imsave
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import pandas as pd
+from scipy.interpolate import make_interp_spline
 
 
 def load_image(file_path, target_size=(256, 256)):
@@ -190,11 +193,135 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
     imsave(output_file, reconstructed_image)
 
 
-"""# function to compress and evaluate images in a folder using fractal compression
+# Function to compress and evaluate images in a folder using fractal compression
 def run_kd_only_compression(original_path, output_path, limit, block_size=8):
+    method = "kd-tree-only"
+    image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
+    print(f"\n\nCompressing {limit} image/s in '{original_path}' using kd-tree only compression...")
+
+    os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
+
+    processed_count = 0  # Count of newly compressed images
+    compression_data = []  # List to store compression metrics for plotting
+
+    for image_file in image_files:
+        if processed_count >= limit:
+            break  # Stop when we have compressed 'limit' new images
+
+        base_filename = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        output_file = os.path.join(output_path, base_filename)
+
+        # Check if the file already exists and generate a new filename with a number
+        counter = 2
+        while os.path.exists(output_file):
+            base_filename = f"compressed_{os.path.splitext(image_file)[0]}_{counter}.jpg"
+            output_file = os.path.join(output_path, base_filename)
+            counter += 1
+
+        print(f"[Processing {processed_count+1}/{limit}] {image_file}...")
+        image_path = os.path.join(original_path, image_file)
+        image = load_image(image_path)
+
+        start_time = time.perf_counter()
+        encoded_data, domain_blocks, buildingTree_time, nearestSearch_time = encode_image_with_kdtree_manual(image, block_size)
+        end_time = time.perf_counter()
+        encodingTime = round((end_time - start_time), 4)
+
+        start_time = time.perf_counter()
+        decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
+        end_time = time.perf_counter()
+        decodingTime = round((end_time - start_time), 4)
+
+        # Collect data for graph plotting
+        _, _, _, psnr, ssim = evaluate_compression(image, image_path, output_file)
+
+        compression_data.append({
+            'Method': method,
+            'Image': image_file,
+            'Encoding Time (s)': encodingTime,
+            'Decoding Time (s)': decodingTime,
+            'PSNR (dB)': psnr,
+            'SSIM': ssim
+        })
+
+        multiRun_csv(
+                method, image, image_path, output_file, image_file, base_filename,
+                buildingTree_time, nearestSearch_time, 0, encodingTime, decodingTime, 0, "singleRun_CSV.csv"
+            )
+        processed_count += 1
+
+    # Plot the metrics after compression
+    plot_compression_metrics(compression_data)
+        
+    print(f"***Finished compressing {limit} image/s***")
+    sys.exit(1)
+
+
+
+
+
+
+def plot_compression_metrics(compression_data):
+    # Convert list of dictionaries into DataFrame
+    df = pd.DataFrame(compression_data)
+
+    # Create 2x2 subplots
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=False)
+
+    # Define metrics and titles
+    metrics = ["Encoding Time (s)", "Decoding Time (s)", "PSNR (dB)", "SSIM"]
+    titles = [
+        "Encoding Time Comparison",
+        "Decoding Time Comparison",
+        "PSNR (dB) Comparison",
+        "SSIM Comparison"
+    ]
+
+    # Plot each metric
+    for i, metric in enumerate(metrics):
+        ax = axes[i // 2, i % 2]
+        for method in df["Method"].unique():
+            method_data = df[df["Method"] == method]
+            y = method_data[metric].dropna()
+            x = np.arange(len(y))
+
+            # Special linestyle for Proposed method
+            line_kwargs = {"label": method}
+            if method == "Proposed":
+                line_kwargs["linestyle"] = "--"
+
+            if len(y) > 3 and len(np.unique(x)) > 3:
+                try:
+                    x_new = np.linspace(x.min(), x.max(), 300)
+                    spline = make_interp_spline(x, y, k=3)
+                    y_smooth = spline(x_new)
+                    ax.plot(x_new, y_smooth, **line_kwargs)
+                except Exception as e:
+                    print(f"[Warning] Spline failed for {method} - {metric}: {e}")
+                    ax.plot(x, y, **line_kwargs)
+            else:
+                ax.plot(x, y, **line_kwargs)
+
+        ax.set_title(titles[i])
+        ax.set_xlabel("Images Compressed")
+        ax.set_ylabel(metric)
+        ax.grid(True)
+        ax.legend(title="Method", loc='best')
+
+    # Final layout adjustment
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
+"""# function to compress and evaluate images in a folder using fractal compression
+def (original_path, output_path, limit, block_size=8):
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     image_files = image_files[:limit]
-    print(f"Compressing {limit} image/s in '{original_path}' using kd-tree only fractal compression...")
+    print(f"Comprerun_kd_only_compressionssing {limit} image/s in '{original_path}' using kd-tree only fractal compression...")
 
     for idx, image_file in enumerate(image_files, start=1):
         image_path = os.path.join(original_path, image_file)
@@ -204,25 +331,28 @@ def run_kd_only_compression(original_path, output_path, limit, block_size=8):
 
         image = load_image(image_path)
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         encoded_data, domain_blocks, buildingTree_time, nearestSearch_time = encode_image_with_kdtree_manual(image, block_size)
-        end_time = time.time()
+        end_time = time.perf_counter()
         encodingTime = round((end_time-start_time), 4)
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
-        end_time = time.time()
+        end_time = time.perf_counter()
         decodingTime = round((end_time-start_time), 4)
 
-        compression_hybrid_csv(image, image_path, output_file, image_file, compressed_file, 
-                        buildingTree_time, nearestSearch_time, 0, encodingTime, decodingTime, 0, "compressed_kd_only_CSV.csv")
+        multiRun_csv(
+                method, testRuns, 
+                image, image_path, output_file, image_file, compressed_file,
+                buildingTree_time, nearestSearch_time, 0, encodingTime, decodingTime, 0, "multiTest_CSV.csv"
+            )
 
     print(f"***Finished compressing {limit} image/s***")
     sys.exit(1)"""
 
 
 
-# multi testing function
+"""# multi testing function
 def run_kd_only_compression(original_path, output_path, limit, block_size=8):
     glioma_original_path = "data/dataset/glioma"
     pituitary_original_path = "data/dataset/pituitary"
@@ -260,14 +390,14 @@ def run_kd_only_compression(original_path, output_path, limit, block_size=8):
 
             image = load_image(image_path)
 
-            start_time = time.time()
+            start_time = time.perf_counter()
             encoded_data, domain_blocks, buildingTree_time, nearestSearch_time = encode_image_with_kdtree_manual(image, block_size)
-            end_time = time.time()
+            end_time = time.perf_counter()
             encodingTime = round((end_time - start_time), 4)
 
-            start_time = time.time()
+            start_time = time.perf_counter()
             decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
-            end_time = time.time()
+            end_time = time.perf_counter()
             decodingTime = round((end_time - start_time), 4)
 
             multiRun_csv(
@@ -277,5 +407,5 @@ def run_kd_only_compression(original_path, output_path, limit, block_size=8):
             )
 
     print(f"\n*** Finished all {total_runs} runs for {len(selected_images)} images ***")
-    sys.exit(1)
+    sys.exit(1)"""
 

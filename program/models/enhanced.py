@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 import time
-from program.util import multiRun_csv
+from program.util import multiRun_csv, evaluate_compression
 from skimage import io, img_as_ubyte, transform
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
@@ -16,6 +16,9 @@ from program.CNN_model import CNNModel  # Import the custom CNNModel class
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 import gdown
+import matplotlib.pyplot as plt
+import pandas as pd
+from scipy.interpolate import make_interp_spline
 
 # Load pre-trained MobileNetV2 model for feature extraction
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -208,13 +211,17 @@ def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_
     imsave(output_file, reconstructed_image)
 
 
-"""# Function to compress and evaluate images in a folder using fractal compression
+# Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
-    # https://drive.google.com/file/d/1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW/view?usp=drive_link
-    file_id = "1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW"
+    method = "proposed"
     cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
-    print(f"\n\nDownloading the CNN model with extracted features...")
-    gdown.download(f"https://drive.google.com/uc?id={file_id}", cnn_model_path, quiet=False)
+
+    if not os.path.exists(cnn_model_path):
+        # https://drive.google.com/file/d/1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW/view?usp=drive_link
+        file_id = "1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW"
+        print(f"\n\nDownloading the CNN model with extracted features...")
+        gdown.download(f"https://drive.google.com/uc?id={file_id}", cnn_model_path, quiet=False)
+    
     cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
 
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
@@ -223,69 +230,128 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
     os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
 
     processed_count = 0  # Count of newly compressed images
+    compression_data = []  # List to store compression metrics for plotting
+    
     for image_file in image_files:
         if processed_count >= limit:
             break  # Stop when we have compressed 'limit' new images
 
-        compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
-        output_file = os.path.join(output_path, compressed_file)
+        base_filename = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        output_file = os.path.join(output_path, base_filename)
 
-        # Skip if already compressed
-        if os.path.exists(output_file):
-            print(f"[SKIPPED] {image_file} already compressed.")
-            continue
+        # Check if the file already exists and generate a new filename with a number
+        counter = 2
+        while os.path.exists(output_file):
+            base_filename = f"compressed_{os.path.splitext(image_file)[0]}_{counter}.jpg"
+            output_file = os.path.join(output_path, base_filename)
+            counter += 1
 
         print(f"[Processing {processed_count+1}/{limit}] {image_file}...")
         image_path = os.path.join(original_path, image_file)
         image = load_image(image_path)
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_kdtree(image, block_size, cnn_model, device)
-        end_time = time.time()
+        end_time = time.perf_counter()
         encodingTime = round((end_time - start_time), 4)
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
-        end_time = time.time()
+        end_time = time.perf_counter()
         decodingTime = round((end_time - start_time), 4)
 
-        compression_hybrid_csv(image, image_path, output_file, image_file, compressed_file, 
-                        buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "compressed_enhanced_CSV.csv")
+        # Collect data for graph plotting
+        _, _, _, psnr, ssim = evaluate_compression(image, image_path, output_file)
+
+        compression_data.append({
+            'Method': method,
+            'Image': image_file,
+            'Encoding Time (s)': encodingTime,
+            'Decoding Time (s)': decodingTime,
+            'PSNR (dB)': psnr,
+            'SSIM': ssim
+        })
+
+        multiRun_csv(
+                method, image, image_path, output_file, image_file, base_filename,
+                buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "singleRun_CSV.csv"
+            )
         processed_count += 1
 
-    # Delete the cnn file after processing
+    # Plot the metrics after compression
+    plot_compression_metrics(compression_data)
+
+    """# Delete the cnn file after processing
     if os.path.exists(cnn_model_path):
-        os.remove(cnn_model_path)
-
+        os.remove(cnn_model_path)"""
+        
     print(f"***Finished compressing {limit} image/s***")
-    sys.exit(1)"""
-
-
-def modify_checkpoint(model_path, new_model):
-    checkpoint = torch.load(model_path, map_location="cpu")
-    new_state_dict = new_model.state_dict()
-
-    # Remove mismatched layers
-    for key in list(checkpoint.keys()):
-        if key not in new_state_dict or checkpoint[key].shape != new_state_dict[key].shape:
-            print(f"Removing mismatched layer: {key}")
-            del checkpoint[key]
-
-    # Load the modified checkpoint into the new model
-    new_model.load_state_dict(checkpoint, strict=False)
-    return new_model
-
-# Example usage
-# cnn_model = CNNModel().to(device)
-# cnn_model = modify_checkpoint("data/features/cnn_model.pth", cnn_model)
+    sys.exit(1)
 
 
 
 
 
 
+def plot_compression_metrics(compression_data):
+    # Convert list of dictionaries into DataFrame
+    df = pd.DataFrame(compression_data)
 
-# multi testing function
+    # Create 2x2 subplots
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=False)
+
+    # Define metrics and titles
+    metrics = ["Encoding Time (s)", "Decoding Time (s)", "PSNR (dB)", "SSIM"]
+    titles = [
+        "Encoding Time Comparison",
+        "Decoding Time Comparison",
+        "PSNR (dB) Comparison",
+        "SSIM Comparison"
+    ]
+
+    # Plot each metric
+    for i, metric in enumerate(metrics):
+        ax = axes[i // 2, i % 2]
+        for method in df["Method"].unique():
+            method_data = df[df["Method"] == method]
+            y = method_data[metric].dropna()
+            x = np.arange(len(y))
+
+            # Special linestyle for Proposed method
+            line_kwargs = {"label": method}
+            if method == "Proposed":
+                line_kwargs["linestyle"] = "--"
+
+            if len(y) > 3 and len(np.unique(x)) > 3:
+                try:
+                    x_new = np.linspace(x.min(), x.max(), 300)
+                    spline = make_interp_spline(x, y, k=3)
+                    y_smooth = spline(x_new)
+                    ax.plot(x_new, y_smooth, **line_kwargs)
+                except Exception as e:
+                    print(f"[Warning] Spline failed for {method} - {metric}: {e}")
+                    ax.plot(x, y, **line_kwargs)
+            else:
+                ax.plot(x, y, **line_kwargs)
+
+        ax.set_title(titles[i])
+        ax.set_xlabel("Images Compressed")
+        ax.set_ylabel(metric)
+        ax.grid(True)
+        ax.legend(title="Method", loc='best')
+
+    # Final layout adjustment
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
+
+
+"""# multi testing function
 # Function to compress and evaluate images in a folder using fractal compression
 def run_enhanced_compression(original_path, output_path, limit, block_size=8):
     # https://drive.google.com/file/d/1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW/view?usp=drive_link
@@ -331,14 +397,14 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
 
             image = load_image(image_path)
 
-            start_time = time.time()
+            start_time = time.perf_counter()
             encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_kdtree(image, block_size, cnn_model, device)
-            end_time = time.time()
+            end_time = time.perf_counter()
             encodingTime = round((end_time - start_time), 4)
 
-            start_time = time.time()
+            start_time = time.perf_counter()
             decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
-            end_time = time.time()
+            end_time = time.perf_counter()
             decodingTime = round((end_time - start_time), 4)
 
             multiRun_csv(
@@ -348,5 +414,5 @@ def run_enhanced_compression(original_path, output_path, limit, block_size=8):
             )
 
     print(f"\n*** Finished all {total_runs} runs for {len(selected_images)} images ***")
-    sys.exit(1)
+    sys.exit(1)"""
 

@@ -32,7 +32,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_path",
         type=str,
-        default="data/compressed",
+        default="data/compressed/test",
         help="Path to the compressed image folder"
     )
     parser.add_argument(
@@ -92,7 +92,7 @@ if __name__ == "__main__":
 #   vp-tree                                       "data/dataset/pituitary"
 #   python main.py --part vp_tree --original_path "data/dataset/glioma" --limit 5
 
-#   kd-tree                                       "data/dataset/pituitary"
+#   kd-tree only                                  "data/dataset/pituitary"
 #   python main.py --part kd_tree --original_path "data/dataset/glioma" --limit 5
 
 #   enhanced                                       "data/dataset/pituitary"

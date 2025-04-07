@@ -6,10 +6,13 @@ from skimage import io, transform, img_as_ubyte
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
 from skimage.io import imsave
-from program.util import multiRun_csv
+from program.util import multiRun_csv, evaluate_compression
 from tqdm import tqdm
 import zlib
 from concurrent.futures import ProcessPoolExecutor
+import matplotlib.pyplot as plt
+import pandas as pd
+from scipy.interpolate import make_interp_spline
 
 
 def load_image(file_path, target_size=(256, 256)):
@@ -131,49 +134,129 @@ def decode_image(encoded_data, image_shape, block_size=8, output_file=None, outp
     imsave(output_file, reconstructed_image)
 
 
-"""# Function to compress and evaluate images in a folder
+# Function to compress and evaluate images in a folder
 def run_traditional_compression(original_path, output_path, limit, block_size=8):
+    method = "traditional"
     image_files = sorted([f for f in os.listdir(original_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     print(f"Compressing {limit} image(s) in '{original_path}' using fractal compression...")
 
     os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
 
     processed_count = 0  # Count of newly compressed images
+    compression_data = []  # List to store compression metrics for plotting
+    
     for image_file in image_files:
         if processed_count >= limit:
             break  # Stop when we have compressed 'limit' new images
 
-        compressed_file = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
-        output_file = os.path.join(output_path, compressed_file)
+        base_filename = f"compressed_{os.path.splitext(image_file)[0]}.jpg"
+        output_file = os.path.join(output_path, base_filename)
 
-        # Skip if already compressed
-        if os.path.exists(output_file):
-            print(f"[SKIPPED] {image_file} already compressed.")
-            continue
+        # Check if the file already exists and generate a new filename with a number
+        counter = 2
+        while os.path.exists(output_file):
+            base_filename = f"compressed_{os.path.splitext(image_file)[0]}_{counter}.jpg"
+            output_file = os.path.join(output_path, base_filename)
+            counter += 1
 
         print(f"[Processing {processed_count+1}/{limit}] {image_file}...")
         image_path = os.path.join(original_path, image_file)
         image = load_image(image_path)
 
-        start_time = time.time()
-        encoded_data, bps = encode_image(image, block_size)
-        encodingTime = round(time.time() - start_time, 4)
+        start_time = time.perf_counter()
+        encoded_data, nearestSearch_time, bps = encode_image(image, block_size)
+        encodingTime = round(time.perf_counter() - start_time, 4)
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         decode_image(encoded_data, image.shape, block_size, output_file=output_file, output_path=output_path)
-        decodingTime = round(time.time() - start_time, 4)
+        decodingTime = round(time.perf_counter() - start_time, 4)
 
-        compression_traditional_csv(image, image_path, output_file, image_file, compressed_file, encodingTime, decodingTime, bps, "compressed_traditional_CSV.csv")
+        # Collect data for graph plotting
+        _, _, _, psnr, ssim = evaluate_compression(image, image_path, output_file)
+
+        compression_data.append({
+            'Method': method,
+            'Image': image_file,
+            'Encoding Time (s)': encodingTime,
+            'Decoding Time (s)': decodingTime,
+            'PSNR (dB)': psnr,
+            'SSIM': ssim
+        })
+
+        multiRun_csv(
+                method, image, image_path, output_file, image_file, base_filename,
+                0, nearestSearch_time, 0, encodingTime, decodingTime, 0, "singleRun_CSV.csv"
+            )
         processed_count += 1
 
-    print(f"***Finished compressing {processed_count} new image(s).***")"""
+    # Plot the metrics after compression
+    plot_compression_metrics(compression_data)
+        
+    print(f"***Finished compressing {limit} image/s***")
+    sys.exit(1)
 
 
 
 
 
 
-# multi testing function
+def plot_compression_metrics(compression_data):
+    # Convert list of dictionaries into DataFrame
+    df = pd.DataFrame(compression_data)
+
+    # Create 2x2 subplots
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=False)
+
+    # Define metrics and titles
+    metrics = ["Encoding Time (s)", "Decoding Time (s)", "PSNR (dB)", "SSIM"]
+    titles = [
+        "Encoding Time Comparison",
+        "Decoding Time Comparison",
+        "PSNR (dB) Comparison",
+        "SSIM Comparison"
+    ]
+
+    # Plot each metric
+    for i, metric in enumerate(metrics):
+        ax = axes[i // 2, i % 2]
+        for method in df["Method"].unique():
+            method_data = df[df["Method"] == method]
+            y = method_data[metric].dropna()
+            x = np.arange(len(y))
+
+            # Special linestyle for Proposed method
+            line_kwargs = {"label": method}
+            if method == "Proposed":
+                line_kwargs["linestyle"] = "--"
+
+            if len(y) > 3 and len(np.unique(x)) > 3:
+                try:
+                    x_new = np.linspace(x.min(), x.max(), 300)
+                    spline = make_interp_spline(x, y, k=3)
+                    y_smooth = spline(x_new)
+                    ax.plot(x_new, y_smooth, **line_kwargs)
+                except Exception as e:
+                    print(f"[Warning] Spline failed for {method} - {metric}: {e}")
+                    ax.plot(x, y, **line_kwargs)
+            else:
+                ax.plot(x, y, **line_kwargs)
+
+        ax.set_title(titles[i])
+        ax.set_xlabel("Images Compressed")
+        ax.set_ylabel(metric)
+        ax.grid(True)
+        ax.legend(title="Method", loc='best')
+
+    # Final layout adjustment
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
+"""# multi testing function
 def run_traditional_compression(original_path, output_path, limit, block_size=8):
     glioma_original_path = "data/dataset/glioma"
     pituitary_original_path = "data/dataset/pituitary"
@@ -228,5 +311,5 @@ def run_traditional_compression(original_path, output_path, limit, block_size=8)
             )
 
     print(f"\n*** Finished all {total_runs} runs for {len(selected_images)} images ***")
-    sys.exit(1)
+    sys.exit(1)"""
 
