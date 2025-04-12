@@ -1,17 +1,17 @@
 import sys
 import os
-import numpy as np
 import time
+import zlib
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from program.util import multiRun_csv, evaluate_compression
 from skimage import io, transform, img_as_ubyte
 from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
 from skimage.io import imsave
-from program.util import multiRun_csv, evaluate_compression
 from tqdm import tqdm
-import zlib
 from concurrent.futures import ProcessPoolExecutor
-import matplotlib.pyplot as plt
-import pandas as pd
 from scipy.interpolate import make_interp_spline
 
 
