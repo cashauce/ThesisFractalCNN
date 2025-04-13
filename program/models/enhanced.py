@@ -3,21 +3,15 @@ import os
 import time
 import torch
 import gdown
-import multiprocessing
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import torchvision.transforms as transforms
 from program.util import multiRun_csv, evaluate_compression
 from program.CNN_model import CNNModel
 from skimage import io, img_as_ubyte, transform
-from skimage.transform import AffineTransform, warp
 from skimage.exposure import rescale_intensity, is_low_contrast
-from skimage.color import rgb2gray
 from skimage.io import imsave
 from tqdm import tqdm
-from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
-from concurrent.futures import ThreadPoolExecutor
 from scipy.interpolate import make_interp_spline
 
 # Load pre-trained MobileNetV2 model for feature extraction
