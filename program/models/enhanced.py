@@ -14,14 +14,12 @@ from skimage.io import imsave
 from tqdm import tqdm
 from scipy.interpolate import make_interp_spline
 
-# Load pre-trained MobileNetV2 model for feature extraction
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def load_cnn_model(model_path, device, input_size=64):
     model = CNNModel(input_size=input_size).to(device)
     checkpoint = torch.load(model_path, map_location=device)
 
-    # Adjust the checkpoint to match the current model's structure
     checkpoint_state_dict = checkpoint
     model_state_dict = model.state_dict()
 
@@ -37,7 +35,6 @@ def load_cnn_model(model_path, device, input_size=64):
             elif "bias" in key:
                 checkpoint_state_dict[key] = torch.zeros_like(model_state_dict[key])
 
-    # Load the adjusted checkpoint
     model.load_state_dict(checkpoint_state_dict, strict=False)
     model.eval()
     return model
@@ -46,12 +43,11 @@ def load_image(file_path, target_size=(256, 256)):
     try:
         image = io.imread(file_path, as_gray=True)
         image = transform.resize(image, target_size, anti_aliasing=True)
-        image = (image - np.min(image)) / (np.max(image) - np.min(image))  # Normalize to [0, 1]
+        image = (image - np.min(image)) / (np.max(image) - np.min(image))
         return image.astype(np.float32)
     except Exception as e:
         raise ValueError(f"Error loading image at {file_path}: {e}")
 
-# Partition image into smaller blocks
 def partition_image(image, block_size):
     h, w = image.shape[:2]
     blocks = []
@@ -64,7 +60,6 @@ def partition_image(image, block_size):
             blocks.append(block)
     return blocks
 
-# Apply affine transformation
 def apply_affine_transformation(block, transformation):
     scale, rotation, tx, ty = transformation
     h, w = block.shape
@@ -89,8 +84,8 @@ def apply_affine_transformation(block, transformation):
 
 class KDNode:
     def __init__(self, point, index, left=None, right=None):
-        self.point = point  # the feature vector
-        self.index = index  # index of the original block
+        self.point = point 
+        self.index = index 
         self.left = left
         self.right = right
 
@@ -98,10 +93,9 @@ def build_kdtree(points, indices, depth=0):
     if len(points) == 0:
         return None
 
-    k = points.shape[1]  # feature vector dimension
+    k = points.shape[1]
     axis = depth % k
 
-    # Sort points and indices together based on the current axis
     sorted_indices = np.argsort(points[:, axis])
     points = points[sorted_indices]
     indices = indices[sorted_indices]
@@ -142,9 +136,8 @@ def find_nearest_in_kdtree(node, target, best=None, best_dist=float('inf'), dept
 
 def encode_image_with_kdtree(image, block_size=8, cnn_model=None, device=None):
     range_blocks = partition_image(image, block_size)
-    domain_blocks = range_blocks  # Use same blocks for both to reduce computation
+    domain_blocks = range_blocks
 
-    # Extract all features at once in a single batch
     start_time = time.perf_counter()
     batch_tensor = torch.stack([torch.tensor(b, dtype=torch.float32).unsqueeze(0) for b in domain_blocks]).to(device)
     with torch.no_grad():
@@ -152,20 +145,18 @@ def encode_image_with_kdtree(image, block_size=8, cnn_model=None, device=None):
         all_features = all_features.view(all_features.size(0), -1).cpu().numpy()
     inference_time = round((time.perf_counter() - start_time) * 1000, 4)
 
-    # Build KD-tree using domain features
     start_time = time.perf_counter()
     domain_indices = np.arange(len(domain_blocks))
     kd_tree = build_kdtree(all_features, domain_indices)
     buildingTree_time = round((time.perf_counter() - start_time) * 1000, 4)
 
-    # Search for nearest neighbors
     encoded_data = []
-    transformation = (1.0, 0.0, 1, 1)  # Fixed transformation
+    transformation = (1.0, 0.0, 1, 1)
     total_search_time = 0
     
     start_encoding = time.perf_counter()
     with tqdm(total=len(range_blocks), desc="Encoding Image", unit="block", colour="green") as pbar:
-        for feature in all_features:  # Use pre-computed features
+        for feature in all_features:
             search_start = time.perf_counter()
             best_node, _ = find_nearest_in_kdtree(kd_tree, feature)
             total_search_time += time.perf_counter() - search_start
@@ -178,14 +169,12 @@ def encode_image_with_kdtree(image, block_size=8, cnn_model=None, device=None):
 
     return encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time
 
-# Decode the image
 def decode_image(encoded_data, domain_blocks, image_shape, block_size=8, output_file=None, output_path='data/compressed/fractal'):
     os.makedirs(output_path, exist_ok=True)
     reconstructed_image = np.zeros(image_shape, dtype=np.float64)
     h, w = image_shape
     idx = 0
 
-    # Decode the data from the raw binary format and include transformation info
     decoded_data = [(int(entry[0]), entry[1]) for entry in encoded_data]
 
     for i in range(0, h, block_size):
@@ -338,76 +327,3 @@ def plot_compression_metrics(compression_data):
     # Final layout adjustment
     plt.tight_layout()
     plt.show()
-
-
-
-
-
-
-
-
-"""# multi testing function
-# Function to compress and evaluate images in a folder using fractal compression
-def run_enhanced_compression(original_path, output_path, limit, block_size=8):
-    # https://drive.google.com/file/d/1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW/view?usp=drive_link
-    #file_id = "1ZEJl6nB2GBOLIuzd3TSWwjVL2Obf-LXW"
-    cnn_model_path = "data/features/cnn_model.pth"  # Path to the pre-trained CNN model
-    #print(f"\n\nDownloading the CNN model with extracted features...")
-    #gdown.download(f"https://drive.google.com/uc?id={file_id}", cnn_model_path, quiet=False)
-    cnn_model = load_cnn_model(cnn_model_path, device, input_size=block_size)  # Use block_size as input_size
-
-    glioma_original_path = "data/dataset/glioma"
-    pituitary_original_path = "data/dataset/pituitary"
-    output_path = "data/compressed/multiTest"
-    print(f"Compressing all glioma and pituitary images using proposed fractal compression...")
-
-    glioma = [
-        "glioma_0132.jpg", "glioma_0990.jpg", "glioma_0322.jpg", "glioma_0296.jpg", "glioma_0102.jpg",
-        "glioma_0840.jpg", "glioma_0557.jpg", "glioma_0386.jpg", "glioma_0769.jpg", "glioma_0159.jpg",
-        "glioma_0934.jpg", "glioma_0171.jpg", "glioma_0111.jpg", "glioma_0918.jpg", "glioma_0558.jpg"
-    ]
-
-    pituitary = [
-        "pituitary_0048.jpg", "pituitary_0681.jpg", "pituitary_0287.jpg", "pituitary_0798.jpg", "pituitary_0598.jpg",
-        "pituitary_0274.jpg", "pituitary_0873.jpg", "pituitary_0971.jpg", "pituitary_0816.jpg", "pituitary_0217.jpg",
-        "pituitary_0106.jpg", "pituitary_0249.jpg", "pituitary_0498.jpg", "pituitary_0218.jpg", "pituitary_0499.jpg"
-    ]
-
-    selected_images = glioma + pituitary
-    method = "proposed"
-    total_runs = 5
-
-    for testRuns in range(1, total_runs + 1):
-        print(f"\n>>> Starting run {testRuns} of {total_runs}...\n")
-
-        for idx, image_file in enumerate(selected_images, start=1):
-            if "glioma" in image_file:
-                image_path = os.path.join(glioma_original_path, image_file)
-            else:
-                image_path = os.path.join(pituitary_original_path, image_file)
-
-            compressed_file = f"{method}_{testRuns}_compressed_{os.path.splitext(image_file)[0]}.jpg"
-            output_file = os.path.join(output_path, compressed_file)
-            print(f"[Run {testRuns}] [Image {idx}/{len(selected_images)}] Processing {image_file}...")
-
-            image = load_image(image_path)
-
-            start_time = time.perf_counter()
-            encoded_data, domain_blocks, bps, buildingTree_time, nearestSearch_time, inference_time = encode_image_with_kdtree(image, block_size, cnn_model, device)
-            end_time = time.perf_counter()
-            encodingTime = round((end_time - start_time), 4)
-
-            start_time = time.perf_counter()
-            decode_image(encoded_data, domain_blocks, image.shape, block_size, output_file=output_file, output_path=output_path)
-            end_time = time.perf_counter()
-            decodingTime = round((end_time - start_time), 4)
-
-            multiRun_csv(
-                method, testRuns, 
-                image, image_path, output_file, image_file, compressed_file,
-                buildingTree_time, nearestSearch_time, inference_time, encodingTime, decodingTime, bps, "multiTest_CSV.csv"
-            )
-
-    print(f"\n*** Finished all {total_runs} runs for {len(selected_images)} images ***")
-    sys.exit(1)"""
-

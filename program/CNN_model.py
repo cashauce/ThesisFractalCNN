@@ -10,18 +10,15 @@ import time
 from program.util import getTime, cnn_metrics_csv
 from torchvision import transforms
 
-# LOAD MRI IMAGES
 class MRIDataset(Dataset):
     def __init__(self, folder, target_size=(256, 256), max_images=10000):
         self.folder = folder
         self.target_size = target_size
         print(f"Loading preprocessed images from: {folder}")
         
-        # Get all image files from preprocessed folder
         self.image_files = [f for f in os.listdir(folder) 
                            if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
         
-        # Limit the number of images
         if len(self.image_files) > max_images:
             print(f"Limiting dataset to {max_images} images")
             self.image_files = self.image_files[:max_images]
@@ -46,7 +43,6 @@ class MRIDataset(Dataset):
             img = Image.open(img_path).convert("L")
             img = self.transform(img)
             
-            # Only verify tensor dimensions without printing
             if img.shape != (1, self.target_size[0], self.target_size[1]):
                 return None
             
@@ -56,13 +52,10 @@ class MRIDataset(Dataset):
             print(f"Error loading image {img_path}: {str(e)}")
             return None
 
-
-# DEFINE CNN MODEL
 class CNNModel(nn.Module):
     def __init__(self, input_size=256):
         super(CNNModel, self).__init__()
         
-        # Optimized encoder architecture
         self.encoder = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
@@ -80,11 +73,9 @@ class CNNModel(nn.Module):
             nn.MaxPool2d(2)
         )
         
-        # Calculate the flattened size
         self.input_size = input_size
         self.flattened_size = self._calculate_flattened_size()
         
-        # Feature extraction layers
         self.feature_layers = nn.Sequential(
             nn.Linear(self.flattened_size, 512),
             nn.ReLU(inplace=True),
@@ -93,7 +84,6 @@ class CNNModel(nn.Module):
             nn.ReLU(inplace=True)
         )
         
-        # Decoder layers with skip connections
         self.decoder = nn.Sequential(
             nn.Linear(128, self.flattened_size),
             nn.ReLU(inplace=True)
@@ -118,31 +108,22 @@ class CNNModel(nn.Module):
         return x.numel()
 
     def forward(self, x):
-        # Encoder
         encoded = self.encoder(x)
-        
-        # Flatten
         flattened = encoded.view(encoded.size(0), -1)
-        
-        # Extract features
         features = self.feature_layers(flattened)
-        
-        # Decode for reconstruction
+
         decoded = self.decoder(features)
         decoded = decoded.view(-1, 128, self.input_size//8, self.input_size//8)
         reconstructed = self.decoder_conv(decoded)
         
         return features, reconstructed
 
-
-# TRAINING FUNCTION
 def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
     start_time = time.time()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset = MRIDataset(dataset_path)
     
-    # Filter out None values from dataset
     valid_indices = []
     for i in range(len(dataset)):
         if dataset[i] is not None:
@@ -153,7 +134,6 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
     
     print(f"Valid images found: {len(valid_indices)} out of {len(dataset)}")
     
-    # Use only valid indices for training
     train_size = int(0.8 * len(valid_indices))
     test_size = len(valid_indices) - train_size
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
@@ -163,17 +143,14 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
 
     model = CNNModel().to(device)
     
-    # Use a more appropriate optimizer and learning rate
     optimizer = optim.AdamW(model.parameters(), lr=0.0002, weight_decay=0.01)
     
-    # Use CosineAnnealingLR instead of ReduceLROnPlateau
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=num_epochs,
         eta_min=1e-6
     )
     
-    # Use a combination of MSE and L1 loss for better reconstruction
     mse_criterion = nn.MSELoss()
     l1_criterion = nn.L1Loss()
 
@@ -196,15 +173,12 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
             start_time = time.time()
             images = images.to(device)
 
-            # Forward pass
             features, reconstructed = model(images)
             
-            # Calculate combined loss
             mse_loss = mse_criterion(reconstructed, images)
             l1_loss = l1_criterion(reconstructed, images)
             loss = (0.8 * mse_loss + 0.2 * l1_loss) * 5
 
-            # Backward pass
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
@@ -213,7 +187,6 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
             epoch_loss += loss.item()
             batch_count += 1
 
-            # Print batch progress
             if (batch_idx + 1) % 5 == 0:
                 print(f"Batch [{batch_idx + 1}/{len(train_loader)}] - Loss: {loss.item():.6f}")
             
@@ -224,7 +197,6 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
         avg_epoch_loss = epoch_loss / batch_count
         train_losses.append(avg_epoch_loss)
 
-        # Validation phase
         model.eval()
         val_loss = 0
         val_batch_count = 0
@@ -238,7 +210,6 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
         avg_val_loss = val_loss / val_batch_count
         val_losses.append(avg_val_loss)
 
-        # Update scheduler at epoch end instead of based on validation loss
         scheduler.step()
 
         print("\nEpoch Summary:")
@@ -246,12 +217,10 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
         print(f"Validation Loss: {avg_val_loss:.6f}")
         print("=" * 50)
 
-    # Save the trained model
     model_save_path = os.path.join(output_path, "cnn_model.pth")
     torch.save(model.state_dict(), model_save_path)
     print(f"Model saved at {model_save_path}")
 
-    # EXTRACTING FEATURES
     feature_vectors = []
     model.eval()
     with torch.no_grad():
@@ -269,7 +238,6 @@ def train_cnn_model(dataset_path, output_path, num_epochs=10, batch_size=32):
     print(f"CNN model training time: {total_time}")
     print(f"Features saved at {output_path}/mri_features.npy")
 
-# Ensure script execution only happens when run directly
 if __name__ == "__main__":
     dataset_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "preprocessed"))
     output_path = "data/features"
