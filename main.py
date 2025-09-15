@@ -84,7 +84,6 @@ if __name__ == "__main__":
     
 
 
-#   data_collection
 
 #   traditional                                       "data/dataset/pituitary"   --limit = no. of data to be use (remove if ALL)
 #   python main.py --part traditional --original_path "data/dataset/glioma" --limit 1
